@@ -115,13 +115,22 @@ public actor VadManager {
     }
 
     private func loadUnifiedModel(from directory: URL? = nil) async throws {
-        let baseDirectory = directory ?? getDefaultBaseDirectory()
+        let modelsDirectory: URL
+        if let directory {
+            if directory.lastPathComponent == "Models" {
+                modelsDirectory = directory
+            } else {
+                modelsDirectory = directory.appendingPathComponent("Models", isDirectory: true)
+            }
+        } else {
+            modelsDirectory = ModelCachePaths.modelsRootDirectory()
+        }
 
         // Use DownloadUtils to load the model (handles downloading if needed)
         let models = try await DownloadUtils.loadModels(
             .vad,
             modelNames: Array(ModelNames.VAD.requiredModels),
-            directory: baseDirectory.appendingPathComponent("Models"),
+            directory: modelsDirectory,
             computeUnits: config.computeUnits
         )
 
@@ -133,13 +142,6 @@ public actor VadManager {
 
         self.vadModel = vadModel
         logger.info("VAD model loaded successfully")
-    }
-
-    private func getDefaultBaseDirectory() -> URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
-        return appSupport.appendingPathComponent("FluidAudio", isDirectory: true)
     }
 
     /// Check if audio chunk is completely silent (all zeros or below threshold)

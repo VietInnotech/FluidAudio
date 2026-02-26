@@ -120,8 +120,7 @@ extension SortformerModels {
         if let cache = cacheDirectory {
             directory = cache
         } else {
-            directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("FluidAudio/Models")
+            directory = ModelCachePaths.modelsRootDirectory()
         }
 
         // Determine which file to retrieve

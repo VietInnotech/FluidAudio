@@ -2,6 +2,12 @@
 
 This guide collects commonly used `fluidaudio` CLI commands for ASR, diarization, VAD, and datasets.
 
+## Model Cache Location
+
+- When running CLI from the FluidAudio repo root, models default to `./Models` (repo-local cache).
+- Override with `FLUIDAUDIO_MODELS_DIR=/absolute/path/to/models`.
+- Existing models in `~/Library/Application Support/FluidAudio/Models` are migrated automatically on first CLI run.
+
 ## TTS
 
 TTS is built into the CLI. Run it directly:

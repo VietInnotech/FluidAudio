@@ -78,17 +78,7 @@ public final class CtcTokenizer: Sendable {
 
     /// Get the CTC model directory path
     private static func getCtcModelDirectory() throws -> URL {
-        guard
-            let applicationSupportURL = FileManager.default.urls(
-                for: .applicationSupportDirectory, in: .userDomainMask
-            ).first
-        else {
-            throw Error.applicationSupportNotFound
-        }
-        return
-            applicationSupportURL
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+        ModelCachePaths.modelsRootDirectory()
             .appendingPathComponent("parakeet-ctc-110m-coreml", isDirectory: true)
     }
 }

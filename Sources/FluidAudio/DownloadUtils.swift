@@ -105,16 +105,15 @@ public class DownloadUtils {
     /// Remove all downloaded models and caches.
     ///
     /// Clears both cache locations:
-    /// - `~/Library/Application Support/FluidAudio/Models/` (ASR, VAD, Diarization)
+    /// - `FLUIDAUDIO_MODELS_DIR` if set, otherwise `~/Library/Application Support/FluidAudio/Models/`
+    ///   (ASR, VAD, Diarization)
     /// - `~/.cache/fluidaudio/Models/` (TTS)
     public static func clearAllModelCaches() {
         let fm = FileManager.default
 
         // ASR, VAD, Diarization models
-        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let modelsDir = appSupport.appendingPathComponent("FluidAudio/Models")
-            try? fm.removeItem(at: modelsDir)
-        }
+        let modelsDir = ModelCachePaths.modelsRootDirectory()
+        try? fm.removeItem(at: modelsDir)
 
         // TTS models (Kokoro, PocketTTS)
         #if os(macOS)

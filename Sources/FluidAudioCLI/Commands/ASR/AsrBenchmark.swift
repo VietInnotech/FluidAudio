@@ -912,10 +912,7 @@ extension ASRBenchmark {
 
                 if ProcessInfo.processInfo.environment["CI"] != nil {
                     logger.debug("🔍 CI Debug Information:")
-                    let modelsDir = FileManager.default.homeDirectoryForCurrentUser
-                        .appendingPathComponent(
-                            "Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-\(modelVersion == .v2 ? "v2" : "v3")-coreml"
-                        )
+                    let modelsDir = AsrModels.defaultCacheDirectory(for: modelVersion)
                     logger.debug("Models directory: \(modelsDir.path)")
                     logger.debug(
                         "   Directory exists: \(FileManager.default.fileExists(atPath: modelsDir.path))"

@@ -94,11 +94,8 @@ extension DiarizerModels {
     }
 
     public static func defaultModelsDirectory() -> URL {
-        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return
-            applicationSupport
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+            ModelCachePaths.modelsRootDirectory()
             .appendingPathComponent(Repo.diarizer.folderName, isDirectory: true)
     }
 

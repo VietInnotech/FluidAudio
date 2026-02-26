@@ -116,7 +116,12 @@ public struct Qwen3AsrModels: Sendable {
         force: Bool = false
     ) async throws -> URL {
         let targetDir = directory ?? defaultCacheDirectory(variant: variant)
-        let modelsRoot = modelsRootDirectory()
+        let modelsRoot: URL
+        if directory == nil {
+            modelsRoot = modelsRootDirectory()
+        } else {
+            modelsRoot = downloadRootDirectory(for: targetDir, variant: variant)
+        }
 
         if !force && modelsExist(at: targetDir) {
             logger.info("Qwen3-ASR \(variant.rawValue) models already present at: \(targetDir.path)")
@@ -149,20 +154,20 @@ public struct Qwen3AsrModels: Sendable {
 
     /// Root directory for all FluidAudio model caches.
     private static func modelsRootDirectory() -> URL {
-        guard
-            let appSupport = FileManager.default.urls(
-                for: .applicationSupportDirectory, in: .userDomainMask
-            ).first
-        else {
-            // Fallback to temporary directory if application support unavailable
-            return FileManager.default.temporaryDirectory
-                .appendingPathComponent("FluidAudio", isDirectory: true)
-                .appendingPathComponent("Models", isDirectory: true)
+        ModelCachePaths.modelsRootDirectory()
+    }
+
+    private static func downloadRootDirectory(for targetDir: URL, variant: Qwen3AsrVariant) -> URL {
+        let normalized = targetDir.standardizedFileURL
+        let folderComponents = variant.repo.folderName.split(separator: "/").map(String.init)
+        if normalized.pathComponents.suffix(folderComponents.count).elementsEqual(folderComponents) {
+            var root = normalized
+            for _ in folderComponents {
+                root.deleteLastPathComponent()
+            }
+            return root
         }
-        return
-            appSupport
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+        return normalized.deletingLastPathComponent()
     }
 
     /// Default cache directory for Qwen3-ASR models.

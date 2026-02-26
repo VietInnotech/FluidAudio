@@ -9,6 +9,12 @@ Build the CLI tool:
 swift build -c release
 ```
 
+## Model Cache
+
+- Running CLI from the repo root uses a repo-local model cache at `./Models`.
+- Set `FLUIDAUDIO_MODELS_DIR` to override the model cache location.
+- On first run, cached models from `~/Library/Application Support/FluidAudio/Models` are auto-migrated if present.
+
 ## Commands Overview
 
 ### 1. `process` - Audio Diarization

@@ -280,8 +280,27 @@ enum SortformerBenchmark {
         do {
             if useHuggingFace {
                 // Clear cache to force re-download
-                let cacheDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("FluidAudio/Models/sortformer")
+                let cacheRoot: URL
+                if
+                    let override = ProcessInfo.processInfo.environment["FLUIDAUDIO_MODELS_DIR"]?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !override.isEmpty
+                {
+                    let expanded = (override as NSString).expandingTildeInPath
+                    if expanded.hasPrefix("/") {
+                        cacheRoot = URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
+                    } else {
+                        let cwd = URL(
+                            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                        cacheRoot = URL(fileURLWithPath: expanded, relativeTo: cwd).standardizedFileURL
+                    }
+                } else {
+                    cacheRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("FluidAudio/Models", isDirectory: true)
+                        .standardizedFileURL
+                }
+
+                let cacheDir = cacheRoot.appendingPathComponent("sortformer", isDirectory: true)
                 try? FileManager.default.removeItem(at: cacheDir)
                 print("   Downloading models from HuggingFace...")
                 fflush(stdout)

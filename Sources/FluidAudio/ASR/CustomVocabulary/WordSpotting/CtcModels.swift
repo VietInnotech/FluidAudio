@@ -271,18 +271,13 @@ extension CtcModels {
         return modelsPresent && vocabPresent
     }
 
-    /// Default cache directory for CTC models (within Application Support).
+    /// Default cache directory for CTC models.
     ///
     /// - Parameter variant: Which CTC model variant (default: .ctc110m).
     /// - Returns: The default cache directory for the specified variant.
     public static func defaultCacheDirectory(for variant: CtcModelVariant = .ctc110m) -> URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
         return
-            appSupport
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+            ModelCachePaths.modelsRootDirectory()
             .appendingPathComponent(variant.repo.folderName, isDirectory: true)
     }
 

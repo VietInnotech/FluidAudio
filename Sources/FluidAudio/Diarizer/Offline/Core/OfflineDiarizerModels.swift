@@ -67,11 +67,7 @@ public struct OfflineDiarizerModels: Sendable {
     }
 
     public static func defaultModelsDirectory() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return
-            base
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+        ModelCachePaths.modelsRootDirectory()
     }
 
     private static func defaultConfiguration() -> MLModelConfiguration {

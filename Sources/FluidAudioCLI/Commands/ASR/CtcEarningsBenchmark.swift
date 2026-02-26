@@ -18,10 +18,7 @@ public enum CtcEarningsBenchmark {
 
     /// Default CTC model directory for a given variant
     private static func defaultCtcModelPath(for variant: CtcModelVariant) -> String? {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
-        let modelPath = appSupport.appendingPathComponent("FluidAudio/Models/\(variant.repo.folderName)")
+        let modelPath = CtcModels.defaultCacheDirectory(for: variant)
         if FileManager.default.fileExists(atPath: modelPath.path) {
             return modelPath.path
         }
@@ -160,7 +157,7 @@ public enum CtcEarningsBenchmark {
         guard let modelPath = ctcModelPath else {
             print("ERROR: CTC model not found")
             print("💡 Download \(ctcVariant.repo.folderName) model to:")
-            print("   ~/Library/Application Support/FluidAudio/Models/\(ctcVariant.repo.folderName)/")
+            print("   \(CtcModels.defaultCacheDirectory(for: ctcVariant).path)/")
             print("   Or specify: --ctc-model <path>")
             print("   Or use different variant: --ctc-variant 110m|06b")
             printUsage()
@@ -1094,6 +1091,8 @@ public enum CtcEarningsBenchmark {
     }
 
     private static func printUsage() {
+        let default110mPath = CtcModels.defaultCacheDirectory(for: .ctc110m).path
+        let default06bPath = CtcModels.defaultCacheDirectory(for: .ctc06b).path
         print(
             """
             CTC Earnings Benchmark (TDT + CTC keyword spotting)
@@ -1118,8 +1117,8 @@ public enum CtcEarningsBenchmark {
 
             Default locations:
                 Dataset: ~/Library/Application Support/FluidAudio/earnings22-kws/test-dataset/
-                CTC Model (110m): ~/Library/Application Support/FluidAudio/Models/parakeet-ctc-110m-coreml/
-                CTC Model (06b): ~/Library/Application Support/FluidAudio/Models/parakeet-ctc-0.6b-coreml/
+                CTC Model (110m): \(default110mPath)/
+                CTC Model (06b): \(default06bPath)/
 
             Setup:
                 1. Download dataset: fluidaudio download --dataset earnings22-kws

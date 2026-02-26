@@ -108,6 +108,7 @@ Documentation/parakeet-tdt/
 docs/parakeet-tdt/
 
 fluidaudio_cli/*
+Models/
 .vscode/
 
 .mobius/

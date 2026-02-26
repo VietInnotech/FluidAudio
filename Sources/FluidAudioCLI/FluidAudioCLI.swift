@@ -9,6 +9,7 @@ import MachTaskSelfWrapper
 @main
 struct FluidAudioCLI {
     static let cliLogger = AppLogger(category: "Main")
+    private static let modelsEnvVar = "FLUIDAUDIO_MODELS_DIR"
 
     static func main() async {
         let arguments = CommandLine.arguments
@@ -17,6 +18,8 @@ struct FluidAudioCLI {
             printUsage()
             exitWithPeakMemory(1)
         }
+
+        configureRepoLocalModelCacheIfNeeded()
 
         // Log system information once at application startup
         await SystemInfo.logOnce(using: cliLogger)
@@ -115,6 +118,78 @@ struct FluidAudioCLI {
                 fluidaudio download --dataset ami-sdm
             """
         )
+    }
+
+    private static func configureRepoLocalModelCacheIfNeeded() {
+        if let configured = ProcessInfo.processInfo.environment[modelsEnvVar], !configured.isEmpty {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        let packageSwift = cwd.appendingPathComponent("Package.swift")
+        let cliSources = cwd.appendingPathComponent("Sources/FluidAudioCLI", isDirectory: true)
+
+        guard
+            fileManager.fileExists(atPath: packageSwift.path),
+            fileManager.fileExists(atPath: cliSources.path)
+        else {
+            return
+        }
+
+        let repoModelsDir = cwd.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
+        do {
+            try fileManager.createDirectory(at: repoModelsDir, withIntermediateDirectories: true)
+            setenv(modelsEnvVar, repoModelsDir.path, 1)
+            cliLogger.info("Using repo-local model cache: \(repoModelsDir.path)")
+            migrateLegacyModelCacheIfNeeded(to: repoModelsDir)
+        } catch {
+            cliLogger.warning("Failed to configure repo-local model cache: \(error.localizedDescription)")
+        }
+    }
+
+    private static func migrateLegacyModelCacheIfNeeded(to repoModelsDir: URL) {
+        let fileManager = FileManager.default
+        guard
+            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else {
+            return
+        }
+
+        let legacyModelsDir = appSupport
+            .appendingPathComponent("FluidAudio", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .standardizedFileURL
+
+        guard legacyModelsDir.path != repoModelsDir.path else { return }
+        guard fileManager.fileExists(atPath: legacyModelsDir.path) else { return }
+
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: legacyModelsDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            if contents.isEmpty {
+                return
+            }
+
+            var copiedCount = 0
+            for item in contents {
+                let destination = repoModelsDir.appendingPathComponent(item.lastPathComponent, isDirectory: true)
+                if fileManager.fileExists(atPath: destination.path) {
+                    continue
+                }
+                try fileManager.copyItem(at: item, to: destination)
+                copiedCount += 1
+            }
+
+            if copiedCount > 0 {
+                cliLogger.info("Migrated \(copiedCount) model folder(s) from \(legacyModelsDir.path) to \(repoModelsDir.path)")
+            }
+        } catch {
+            cliLogger.warning("Model cache migration skipped: \(error.localizedDescription)")
+        }
     }
 
     static func fetchPeakMemoryUsageBytes() -> UInt64? {

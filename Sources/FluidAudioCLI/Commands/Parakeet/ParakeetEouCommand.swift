@@ -166,6 +166,23 @@ struct ParakeetEouCommand {
 
     /// Get the standard models directory in Application Support
     static func getModelsDirectory() -> URL {
+        if
+            let override = ProcessInfo.processInfo.environment["FLUIDAUDIO_MODELS_DIR"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !override.isEmpty
+        {
+            let expanded = (override as NSString).expandingTildeInPath
+            let baseURL: URL
+            if expanded.hasPrefix("/") {
+                baseURL = URL(fileURLWithPath: expanded, isDirectory: true)
+            } else {
+                let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                baseURL = URL(fileURLWithPath: expanded, relativeTo: cwd)
+            }
+            return baseURL.standardizedFileURL
+                .appendingPathComponent("parakeet-eou-streaming", isDirectory: true)
+        }
+
         let applicationSupportURL = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first!

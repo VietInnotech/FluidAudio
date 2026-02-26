@@ -406,13 +406,8 @@ extension AsrModels {
     }
 
     public static func defaultCacheDirectory(for version: AsrModelVersion = .v3) -> URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
         return
-            appSupport
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+            ModelCachePaths.modelsRootDirectory()
             .appendingPathComponent(version.repo.folderName, isDirectory: true)
     }
 

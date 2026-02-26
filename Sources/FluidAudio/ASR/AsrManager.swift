@@ -265,12 +265,7 @@ public final class AsrManager {
         }
     }
     private static func getDefaultModelsDirectory() -> URL {
-        let applicationSupportURL = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
-        let appDirectory = applicationSupportURL.appendingPathComponent(
-            "FluidAudio", isDirectory: true)
-        let directory = appDirectory.appendingPathComponent("Models/Parakeet", isDirectory: true)
+        let directory = ModelCachePaths.modelsRootDirectory().appendingPathComponent("Parakeet", isDirectory: true)
 
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.standardizedFileURL
