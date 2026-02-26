@@ -1,12 +1,13 @@
 {
   "hooks": {
-    "Stop": [
+    "PostToolUse": [
       {
-        "matcher": "\\.swift$",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "swift format --in-place --recursive --configuration .swift-format Sources/ Tests/"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-swift-file.sh\"",
+            "timeout": 30
           }
         ]
       }

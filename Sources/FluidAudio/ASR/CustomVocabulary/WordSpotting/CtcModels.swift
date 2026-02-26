@@ -14,11 +14,14 @@ public enum CtcModelVariant: String, CaseIterable, Sendable {
     case ctc110m
     /// Pure CTC 0.6B model (CoreML greedy decoding broken, use constrained CTC instead)
     case ctc06b
+    /// Vietnamese CTC 0.6B model (finetuned from parakeet-ctc-0.6b for Vietnamese + English CS)
+    case ctcVietnamese
 
     public var repo: Repo {
         switch self {
         case .ctc110m: return .parakeetCtc110m
         case .ctc06b: return .parakeetCtc06b
+        case .ctcVietnamese: return .parakeetCtcVietnamese
         }
     }
 
@@ -26,6 +29,7 @@ public enum CtcModelVariant: String, CaseIterable, Sendable {
         switch self {
         case .ctc110m: return "Parakeet CTC 110M (hybrid)"
         case .ctc06b: return "Parakeet CTC 0.6B (pure)"
+        case .ctcVietnamese: return "Parakeet CTC 0.6B Vietnamese"
         }
     }
 }

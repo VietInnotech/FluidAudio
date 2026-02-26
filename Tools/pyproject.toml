@@ -1,0 +1,26 @@
+[project]
+name = "fluidaudio-model-conversion"
+version = "0.1.0"
+description = "NeMo CTC → CoreML conversion tools for FluidAudio"
+requires-python = "==3.11.*"
+
+dependencies = [
+    # PyTorch — use CPU-only wheel for macOS ARM64 (ANE/GPU handled by CoreML at inference time)
+    "torch>=2.3.0,<2.5",
+    "torchaudio>=2.3.0,<2.5",
+    # NeMo ASR (brings in librosa, numba, hydra, etc.)
+    "nemo_toolkit[asr]>=2.1.0",
+    # CoreML conversion
+    "coremltools>=8.0",
+    # ONNX intermediate format
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    # Utilities
+    "numpy>=1.24,<2.0",
+    "huggingface_hub>=0.23",
+    "tqdm",
+    # Pin scikit-learn to match coremltools 9.0 requirement (<= 1.5.1)
+    "scikit-learn>=0.17,<=1.5.1",
+]
+
+

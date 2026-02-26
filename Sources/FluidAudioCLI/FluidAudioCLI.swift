@@ -63,6 +63,8 @@ struct FluidAudioCLI {
             await Qwen3AsrBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
         case "qwen3-transcribe":
             await Qwen3TranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "ctc-transcribe":
+            await CtcTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
             printUsage()
         default:
@@ -93,6 +95,7 @@ struct FluidAudioCLI {
                 ctc-earnings-benchmark  Run CTC keyword spotting benchmark on Earnings22
                 sortformer              Run Sortformer streaming diarization
                 sortformer-benchmark    Run Sortformer benchmark on AMI dataset
+                ctc-transcribe          Transcribe audio using CTC greedy decoding (Vietnamese)
                 download                Download evaluation datasets
                 help                    Show this help message
 
@@ -112,6 +115,8 @@ struct FluidAudioCLI {
                 fluidaudio multi-stream audio1.wav audio2.wav
 
                 fluidaudio tts "Hello world" --output hello.wav
+
+                fluidaudio ctc-transcribe audio.wav
 
                 fluidaudio vad-analyze audio.wav --streaming
 

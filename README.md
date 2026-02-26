@@ -33,7 +33,7 @@ Want to convert your own model? Check [möbius](https://github.com/FluidInferenc
 
 ## Highlights
 
-- **Automatic Speech Recognition (ASR)**: Parakeet TDT v3 (0.6b) for transcription; supports all 25 European languages
+- **Automatic Speech Recognition (ASR)**: Parakeet TDT v3 (0.6b) for multilingual transcription (25 languages); CTC models for language-specific inference
 - **Inverse Text Normalization (ITN)**: Post-process ASR output to convert spoken-form to written-form ("two hundred" → "200"). See [text-processing-rs](https://github.com/FluidInference/text-processing-rs)
 - **Speaker Diarization (Online + Offline)**: Speaker separation and identification across audio streams. Streaming pipeline for real-time processing and offline batch pipeline with advanced clustering.
 - **Speaker Embedding Extraction**: Generate speaker embeddings for voice comparison and clustering, you can use this for speaker identification
@@ -266,11 +266,17 @@ claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 
 ## Automatic Speech Recognition (ASR) / Transcription
 
-- **Models**:
+- **Transducer Models (Parakeet TDT)** — Streaming-ready encoder-decoder:
   - `FluidInference/parakeet-tdt-0.6b-v3-coreml` (multilingual, 25 European languages)
   - `FluidInference/parakeet-tdt-0.6b-v2-coreml` (English-only, highest recall)
+  - Real-time Factor: ~190x on M4 Pro (1 hour audio in ~19 seconds)
+
+- **CTC Models** — Fast, lightweight alternative for supported languages:
+  - `leakless/parakeet-ctc-0.6b-Vietnamese-coreml` (Vietnamese)
+  - Real-time Factor: ~36x on M4 Pro (30s audio in 0.8s)
+  - Smaller footprint (~258 MB vs 1.2 GB for TDT)
+
 - **Processing Mode**: Batch transcription for complete audio files
-- **Real-time Factor**: ~190x on M4 Pro (processes 1 hour of audio in ~19 seconds)
 - **Streaming Support**: Coming soon — batch processing is recommended for production use
 - **Backend**: Same Parakeet TDT v3 model powers our backend ASR
 
@@ -304,7 +310,33 @@ swift run fluidaudio transcribe audio.wav
 
 # English-only run with higher recall
 swift run fluidaudio transcribe audio.wav --model-version v2
+
+# Vietnamese CTC transcription (lightweight alternative)
+swift run fluidaudio ctc-transcribe audio.wav
 ```
+
+### CTC Models (Vietnamese)
+
+For Vietnamese transcription, use the lighter CTC model:
+
+```swift
+import FluidAudio
+
+Task {
+    let manager = CtcAsrManager()
+    try await manager.loadModels(variant: .ctcVietnamese)
+    
+    let result = try await manager.transcribe(url: URL(fileURLWithPath: "vietnamese_audio.wav"))
+    print("Transcription: \(result.text)")
+    print("Confidence: \(result.confidence)")
+}
+```
+
+**CTC vs Parakeet TDT:**
+| Model | Languages | Size | RTFx | Use Case |
+|-------|-----------|------|------|----------|
+| **Parakeet TDT** | 25 European | 1.2 GB | 190x | Multilingual, highest quality |
+| **Parakeet CTC Vietnamese** | 1 (Vietnamese) | 258 MB | 36x | Vietnamese-only, lightweight |
 
 ## Speaker Diarization
 

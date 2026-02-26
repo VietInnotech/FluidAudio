@@ -115,3 +115,19 @@ Models/
 
 # Continuous Claude cache (local only)
 .claude/cache/
+
+# Python & Tools
+Tools/.venv/
+Tools/__pycache__/
+Tools/*.pyc
+Tools/.pytest_cache/
+*.egg-info/
+
+# Large compiled models (auto-generated, not committed)
+Models/**/*.mlmodelc/
+Models/**/*.mlpackage/
+Models/**/weights/
+
+# NeMo cache
+Tools/.cache/
+nemo_home/

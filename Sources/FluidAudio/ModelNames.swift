@@ -13,6 +13,7 @@ public enum Repo: String, CaseIterable {
     case kokoro = "FluidInference/kokoro-82m-coreml"
     case sortformer = "FluidInference/diar-streaming-sortformer-coreml"
     case pocketTts = "FluidInference/pocket-tts-coreml"
+    case parakeetCtcVietnamese = "FluidInference/parakeet-ctc-0.6b-vietnamese-coreml"
     case qwen3Asr = "FluidInference/qwen3-asr-0.6b-coreml/f32"
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
 
@@ -29,6 +30,8 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
             return "parakeet-ctc-0.6b-coreml"
+        case .parakeetCtcVietnamese:
+            return "parakeet-ctc-0.6b-vietnamese-coreml"
         case .parakeetEou160:
             return "parakeet-realtime-eou-120m-coreml/160ms"
         case .parakeetEou320:
@@ -55,6 +58,8 @@ public enum Repo: String, CaseIterable {
             return "FluidInference/parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
             return "FluidInference/parakeet-ctc-0.6b-coreml"
+        case .parakeetCtcVietnamese:
+            return "FluidInference/parakeet-ctc-0.6b-vietnamese-coreml"
         case .parakeetEou160, .parakeetEou320:
             return "FluidInference/parakeet-realtime-eou-120m-coreml"
         case .sortformer:
@@ -393,7 +398,7 @@ public enum ModelNames {
             return ModelNames.VAD.requiredModels
         case .parakeet, .parakeetV2:
             return ModelNames.ASR.requiredModels
-        case .parakeetCtc110m, .parakeetCtc06b:
+        case .parakeetCtc110m, .parakeetCtc06b, .parakeetCtcVietnamese:
             return ModelNames.CTC.requiredModels
         case .parakeetEou160, .parakeetEou320:
             return ModelNames.ParakeetEOU.requiredModels
