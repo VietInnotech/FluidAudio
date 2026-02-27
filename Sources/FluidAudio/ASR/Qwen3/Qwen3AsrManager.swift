@@ -166,10 +166,11 @@ public actor Qwen3AsrManager {
                     / Qwen3AsrConfig.convDownsampleFactor
             }
 
+            let encoderOutputDim = models.encoderOutputDim
             for f in 0..<numOutputFrames {
-                var vec = [Float](repeating: 0.0, count: Qwen3AsrConfig.encoderOutputDim)
-                for d in 0..<Qwen3AsrConfig.encoderOutputDim {
-                    let idx = f * Qwen3AsrConfig.encoderOutputDim + d
+                var vec = [Float](repeating: 0.0, count: encoderOutputDim)
+                for d in 0..<encoderOutputDim {
+                    let idx = f * encoderOutputDim + d
                     vec[d] = features[idx].floatValue
                 }
                 allFeatures.append(vec)
@@ -346,11 +347,12 @@ public actor Qwen3AsrManager {
         currentPosition = promptLength
 
         // Preallocate decode buffers
+        let hiddenSize = models.hiddenSize
         let decHiddenArray = try MLMultiArray(
-            shape: [1, 1, NSNumber(value: Qwen3AsrConfig.hiddenSize)], dataType: .float32
+            shape: [1, 1, NSNumber(value: hiddenSize)], dataType: .float32
         )
         let decHiddenPtr = decHiddenArray.dataPointer.bindMemory(
-            to: Float.self, capacity: Qwen3AsrConfig.hiddenSize
+            to: Float.self, capacity: hiddenSize
         )
         let decodeCosArray = try MLMultiArray(
             shape: [1, 1, NSNumber(value: Qwen3AsrConfig.headDim)], dataType: .float32
@@ -388,7 +390,7 @@ public actor Qwen3AsrManager {
             let nextEmbedding = models.embeddingWeights.embedding(for: lastTokenId)
 
             nextEmbedding.withUnsafeBufferPointer { src in
-                _ = memcpy(decHiddenPtr, src.baseAddress!, Qwen3AsrConfig.hiddenSize * MemoryLayout<Float>.size)
+                _ = memcpy(decHiddenPtr, src.baseAddress!, hiddenSize * MemoryLayout<Float>.size)
             }
             rope.fill(position: currentPosition, cosPtr: decodeCosPtr, sinPtr: decodeSinPtr)
             let endStep = currentPosition + 1
@@ -533,14 +535,17 @@ public actor Qwen3AsrManager {
 
     private func createBatchedHiddenArray(embeddings: [[Float]]) throws -> MLMultiArray {
         let seqLen = embeddings.count
-        let shape: [NSNumber] = [1, NSNumber(value: seqLen), NSNumber(value: Qwen3AsrConfig.hiddenSize)]
+        guard let hiddenSize = embeddings.first?.count else {
+            throw Qwen3AsrError.generationFailed("Empty embeddings")
+        }
+        let shape: [NSNumber] = [1, NSNumber(value: seqLen), NSNumber(value: hiddenSize)]
         let array = try MLMultiArray(shape: shape, dataType: .float32)
-        let totalCount = seqLen * Qwen3AsrConfig.hiddenSize
+        let totalCount = seqLen * hiddenSize
         let ptr = array.dataPointer.bindMemory(to: Float.self, capacity: totalCount)
         for i in 0..<seqLen {
-            let offset = i * Qwen3AsrConfig.hiddenSize
+            let offset = i * hiddenSize
             let emb = embeddings[i]
-            for j in 0..<Qwen3AsrConfig.hiddenSize {
+            for j in 0..<hiddenSize {
                 ptr[offset + j] = emb[j]
             }
         }

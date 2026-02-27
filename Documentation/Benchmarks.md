@@ -2,6 +2,27 @@
 
 2024 MacBook Pro, 48GB Ram, M4 Pro, Tahoe 26.0
 
+## Whisper Large v3 Turbo
+
+Pre-built CoreML models from [argmaxinc/whisperkit-coreml](https://huggingface.co/argmaxinc/whisperkit-coreml). Text normalization applied (lowercase, strip punctuation) before WER comparison.
+
+```bash
+swift run fluidaudiocli whisper-benchmark \
+  --max-files 20 \
+  --model-dir Models/whisperkit-coreml/openai_whisper-large-v3_turbo
+```
+
+```text
+Dataset: LibriSpeech test-clean
+Files: 20 (speaker 1089)
+Average WER:  2.4%
+Average RTFx: 3.4x
+Median RTFx:  3.5x
+Peak memory:  ~3.6 GB
+```
+
+RTFx is lower than Parakeet (~130×) because Whisper uses a large encoder-decoder with sequential KV-cache decoding. Accuracy is comparable: similar WER on clean speech, stronger on accented/multilingual audio.
+
 ## Transcription
 
 https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml 

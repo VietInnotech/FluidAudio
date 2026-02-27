@@ -36,6 +36,12 @@ swift run fluidaudio asr-benchmark --subset test-clean --max-files 50 --model-ve
 
 # Multilingual ASR (FLEURS) benchmark
 swift run fluidaudio fleurs-benchmark --languages en_us,fr_fr --samples 10
+
+# Whisper Large v3 Turbo benchmark (LibriSpeech test-clean)
+swift run fluidaudio whisper-benchmark --max-files 50 --model-dir Models/whisperkit-coreml/openai_whisper-large-v3_turbo
+
+# Whisper with a specific language
+swift run fluidaudio whisper-benchmark --max-files 20 --language fr --model-dir Models/whisperkit-coreml/openai_whisper-large-v3_turbo
 ```
 
 ## Diarization

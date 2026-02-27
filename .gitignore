@@ -122,12 +122,28 @@ Tools/__pycache__/
 Tools/*.pyc
 Tools/.pytest_cache/
 *.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+Tools/build/
+Tools/.cache/
+Tools/qwen3-asr/
+Tools/whisperkit/
+Tools/mobius/models/
+Tools/mobius/knowledge/
 
 # Large compiled models (auto-generated, not committed)
 Models/**/*.mlmodelc/
 Models/**/*.mlpackage/
 Models/**/weights/
 
+# Benchmark and test results (local only)
+benchmark-results/
+*_benchmark_results.json
+*_results.json
+
 # NeMo cache
-Tools/.cache/
 nemo_home/
+
+# Local environment variables
+.env

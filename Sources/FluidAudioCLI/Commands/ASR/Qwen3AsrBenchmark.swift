@@ -110,7 +110,7 @@ enum Qwen3AsrBenchmark {
                     if let parsed = Qwen3AsrVariant(rawValue: v) {
                         variant = parsed
                     } else {
-                        logger.error("Unknown variant '\(arguments[i + 1])'. Use 'f32' or 'int8'.")
+                        logger.error("Unknown variant '\(arguments[i + 1])'. Use 'f32', 'int8', or 'large'.")
                         exit(1)
                     }
                     i += 1

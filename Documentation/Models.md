@@ -9,8 +9,7 @@ A guide to each CoreML model pipeline in FluidAudio.
 | Model | Description | Context |
 |-------|-------------|---------|
 | **Parakeet TDT v2** | Batch speech-to-text, English only (0.6B params). TDT architecture. | First ASR model added. |
-| **Parakeet TDT v3** | Batch speech-to-text, 25 European languages (0.6B params). Default ASR model. | Released after v2 to add multilingual support. |
-
+| **Parakeet TDT v3** | Batch speech-to-text, 25 European languages (0.6B params). Default ASR model. | Released after v2 to add multilingual support. || **Whisper Large v3 Turbo** | Batch speech-to-text, 99 languages (809M params). Encoder-decoder with KV-cache decode loop. 4-step pipeline: MelSpectrogram → AudioEncoder → (ContextPrefill) → TextDecoder. | Pre-built CoreML bundles from [argmaxinc/whisperkit-coreml](https://huggingface.co/argmaxinc/whisperkit-coreml). |
 TDT models process audio in chunks (~15s with overlap) as batch operations. Fast enough for dictation-style workflows. Not suitable for word-by-word live captions.
 
 ### Streaming Transcription (True Real-Time)
@@ -63,6 +62,7 @@ Models we converted and tested but haven't shipped yet — either still in devel
 | Parakeet CTC 110M | [FluidInference/parakeet-ctc-110m-coreml](https://huggingface.co/FluidInference/parakeet-ctc-110m-coreml) |
 | Parakeet CTC 0.6B | [FluidInference/parakeet-ctc-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-ctc-0.6b-coreml) |
 | Parakeet EOU | [FluidInference/parakeet-realtime-eou-120m-coreml](https://huggingface.co/FluidInference/parakeet-realtime-eou-120m-coreml) |
+| Whisper Large v3 Turbo | [argmaxinc/whisperkit-coreml / openai_whisper-large-v3_turbo](https://huggingface.co/argmaxinc/whisperkit-coreml) |
 | Silero VAD | [FluidInference/silero-vad-coreml](https://huggingface.co/FluidInference/silero-vad-coreml) |
 | Diarization (Pyannote) | [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml) |
 | Sortformer | [FluidInference/diar-streaming-sortformer-coreml](https://huggingface.co/FluidInference/diar-streaming-sortformer-coreml) |

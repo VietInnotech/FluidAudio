@@ -63,6 +63,8 @@ struct FluidAudioCLI {
             await Qwen3AsrBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
         case "qwen3-transcribe":
             await Qwen3TranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "whisper-benchmark":
+            await WhisperBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
         case "ctc-transcribe":
             await CtcTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
@@ -96,6 +98,7 @@ struct FluidAudioCLI {
                 sortformer              Run Sortformer streaming diarization
                 sortformer-benchmark    Run Sortformer benchmark on AMI dataset
                 ctc-transcribe          Transcribe audio using CTC greedy decoding (Vietnamese)
+                whisper-benchmark       Run Whisper Large v3 Turbo benchmark on LibriSpeech
                 download                Download evaluation datasets
                 help                    Show this help message
 

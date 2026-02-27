@@ -12,6 +12,7 @@
 - [Custom Pronunciation](ASR/CustomPronunciation.md)
 - [Last Chunk Handling](ASR/LastChunkHandling.md)
 - [Manual Model Loading](ASR/ManualModelLoading.md)
+- [Whisper Large v3 Turbo](Whisper.md)
 
 ## Diarization
 - [Getting Started](Diarization/GettingStarted.md)

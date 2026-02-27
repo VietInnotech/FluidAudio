@@ -4,18 +4,51 @@ import OSLog
 
 private let logger = Logger(subsystem: "FluidAudio", category: "Qwen3AsrModels")
 
-/// Qwen3-ASR model variant (precision).
+/// Qwen3-ASR model size.
+public enum Qwen3AsrModelSize: String, CaseIterable, Sendable {
+    case small = "0.6b"
+    case large = "1.7b"
+
+    /// Text decoder hidden size for this model.
+    public var hiddenSize: Int {
+        switch self {
+        case .small: return 1024
+        case .large: return 2048
+        }
+    }
+
+    /// Audio encoder output dimension for this model.
+    public var encoderOutputDim: Int {
+        switch self {
+        case .small: return 1024
+        case .large: return 2048
+        }
+    }
+}
+
+/// Qwen3-ASR model variant (size + precision).
 public enum Qwen3AsrVariant: String, CaseIterable, Sendable {
-    /// Full precision (FP16 weights). Best speed, ~1.75 GB.
+    /// 0.6B full precision (FP16 weights). Best speed, ~1.75 GB.
     case f32
-    /// Int8 quantized weights. Half the RAM (~900 MB), same quality.
+    /// 0.6B Int8 quantized weights. Half the RAM (~900 MB), same quality.
     case int8
+    /// 1.7B full precision (FP16 weights). Best quality, ~3.5 GB.
+    case large
+
+    /// Model size for this variant.
+    public var modelSize: Qwen3AsrModelSize {
+        switch self {
+        case .f32, .int8: return .small
+        case .large: return .large
+        }
+    }
 
     /// Corresponding HuggingFace model repository.
     public var repo: Repo {
         switch self {
         case .f32: return .qwen3Asr
         case .int8: return .qwen3AsrInt8
+        case .large: return .qwen3Asr17b
         }
     }
 }
@@ -28,15 +61,21 @@ public enum Qwen3AsrVariant: String, CaseIterable, Sendable {
 /// eliminating the embedding CoreML model. Reduces CoreML calls from 3 to 2 per token.
 ///
 /// Components:
-/// - `audioEncoder`: mel spectrogram -> 1024-dim audio features (single window)
+/// - `audioEncoder`: mel spectrogram -> audio features (single window)
 /// - `decoderStateful`: stateful decoder with fused lmHead (outputs logits directly)
-/// - `embeddingWeights`: [151936, 1024] float16 matrix for Swift-side embedding lookup
+/// - `embeddingWeights`: float16 matrix for Swift-side embedding lookup
 @available(macOS 15, iOS 18, *)
 public struct Qwen3AsrModels: Sendable {
     public let audioEncoder: MLModel
     public let decoderStateful: MLModel
     public let embeddingWeights: EmbeddingWeights
     public let vocabulary: [Int: String]
+    public let modelSize: Qwen3AsrModelSize
+
+    /// Text decoder hidden size (1024 for 0.6B, 2048 for 1.7B).
+    public var hiddenSize: Int { modelSize.hiddenSize }
+    /// Audio encoder output dimension (1024 for 0.6B, 2048 for 1.7B).
+    public var encoderOutputDim: Int { modelSize.encoderOutputDim }
 
     /// Load Qwen3-ASR models (2-model pipeline with Swift-side embedding) from a directory.
     ///
@@ -81,11 +120,25 @@ public struct Qwen3AsrModels: Sendable {
         // Load vocabulary from tokenizer
         let vocabulary = try loadVocabulary(from: directory)
 
+        // Detect model size from embedding dimensions
+        let modelSize: Qwen3AsrModelSize
+        if let detected = Qwen3AsrModelSize.allCases.first(where: { $0.hiddenSize == embeddingWeights.hiddenSize })
+        {
+            modelSize = detected
+        } else {
+            logger.warning(
+                "Unknown hidden size \(embeddingWeights.hiddenSize), defaulting to 0.6B config"
+            )
+            modelSize = .small
+        }
+        logger.info("Detected Qwen3-ASR model size: \(modelSize.rawValue) (hidden=\(modelSize.hiddenSize))")
+
         return Qwen3AsrModels(
             audioEncoder: audioEncoder,
             decoderStateful: decoderStateful,
             embeddingWeights: embeddingWeights,
-            vocabulary: vocabulary
+            vocabulary: vocabulary,
+            modelSize: modelSize
         )
     }
 
@@ -271,31 +324,32 @@ public final class EmbeddingWeights: Sendable {
         }
 
         // Read header
-        let vocab = fileData.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }
-        let hidden = fileData.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
-        self.vocabSize = Int(vocab)
-        self.hiddenSize = Int(hidden)
+        let vocabVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) })
+        let hiddenVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) })
 
-        // Validate against config
-        guard vocabSize == Qwen3AsrConfig.vocabSize else {
+        // Validate vocab size is consistent
+        guard vocabVal == Qwen3AsrConfig.vocabSize else {
             throw Qwen3AsrError.generationFailed(
-                "Embedding vocab size \(vocabSize) != config \(Qwen3AsrConfig.vocabSize)"
+                "Embedding vocab size \(vocabVal) != expected \(Qwen3AsrConfig.vocabSize)"
             )
         }
-        guard hiddenSize == Qwen3AsrConfig.hiddenSize else {
+        // Validate hidden size is one of the known model sizes
+        guard Qwen3AsrModelSize.allCases.contains(where: { $0.hiddenSize == hiddenVal }) else {
             throw Qwen3AsrError.generationFailed(
-                "Embedding hidden size \(hiddenSize) != config \(Qwen3AsrConfig.hiddenSize)"
+                "Embedding hidden size \(hiddenVal) does not match any known Qwen3-ASR model size"
             )
         }
 
         // Verify file size
-        let expectedSize = 8 + vocabSize * hiddenSize * 2  // header + float16 data
+        let expectedSize = 8 + vocabVal * hiddenVal * 2  // header + float16 data
         guard fileData.count == expectedSize else {
             throw Qwen3AsrError.generationFailed(
                 "Embedding file size mismatch: expected \(expectedSize), got \(fileData.count)"
             )
         }
 
+        self.vocabSize = vocabVal
+        self.hiddenSize = hiddenVal
         self.data = fileData
     }
 

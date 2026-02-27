@@ -108,3 +108,26 @@ swift run fluidaudio parakeet-eou --benchmark --chunk-size 160 --max-files 100 -
 ```
 
 **Options:** `--input <path>`, `--benchmark`, `--max-files <n>`, `--chunk-size <160|320|1600>`, `--eou-debounce <ms>`, `--use-cache`, `--models <path>`, `--output <path>`, `--verbose`
+
+## Whisper Large v3 Turbo
+
+99-language batch transcription using pre-built CoreML models from WhisperKit. Model directory must be downloaded manually — see [Whisper.md](../Whisper.md).
+
+```swift
+import FluidAudio
+
+let manager = WhisperManager()
+let modelDir = URL(fileURLWithPath: "Models/whisperkit-coreml/openai_whisper-large-v3_turbo")
+try await manager.loadModels(from: modelDir)
+
+let converter = AudioConverter()
+let samples = try converter.resampleAudioFile(URL(fileURLWithPath: "audio.wav"))
+
+let text = try await manager.transcribe(audioSamples: samples, language: "en")
+```
+
+```bash
+swift run fluidaudio whisper-benchmark \
+  --max-files 50 \
+  --model-dir Models/whisperkit-coreml/openai_whisper-large-v3_turbo
+```

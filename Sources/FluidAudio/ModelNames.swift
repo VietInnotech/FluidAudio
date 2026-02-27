@@ -16,6 +16,8 @@ public enum Repo: String, CaseIterable {
     case parakeetCtcVietnamese = "FluidInference/parakeet-ctc-0.6b-vietnamese-coreml"
     case qwen3Asr = "FluidInference/qwen3-asr-0.6b-coreml/f32"
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
+    case qwen3Asr17b = "FluidInference/qwen3-asr-1.7b-coreml/f32"
+    case whisperLargeV3Turbo = "argmaxinc/whisperkit-coreml/openai_whisper-large-v3_turbo"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -48,6 +50,10 @@ public enum Repo: String, CaseIterable {
             return "qwen3-asr-0.6b-coreml/f32"
         case .qwen3AsrInt8:
             return "qwen3-asr-0.6b-coreml/int8"
+        case .qwen3Asr17b:
+            return "qwen3-asr-1.7b-coreml/f32"
+        case .whisperLargeV3Turbo:
+            return "whisperkit-coreml/openai_whisper-large-v3_turbo"
         }
     }
 
@@ -66,6 +72,10 @@ public enum Repo: String, CaseIterable {
             return "FluidInference/diar-streaming-sortformer-coreml"
         case .qwen3Asr, .qwen3AsrInt8:
             return "FluidInference/qwen3-asr-0.6b-coreml"
+        case .qwen3Asr17b:
+            return "FluidInference/qwen3-asr-1.7b-coreml"
+        case .whisperLargeV3Turbo:
+            return "argmaxinc/whisperkit-coreml"
         default:
             return "FluidInference/\(name)"
         }
@@ -82,6 +92,10 @@ public enum Repo: String, CaseIterable {
             return "f32"
         case .qwen3AsrInt8:
             return "int8"
+        case .qwen3Asr17b:
+            return "f32"
+        case .whisperLargeV3Turbo:
+            return "openai_whisper-large-v3_turbo"
         default:
             return nil
         }
@@ -313,6 +327,26 @@ public enum ModelNames {
         ]
     }
 
+    /// Whisper model names (OpenAI Whisper Large v3 Turbo via WhisperKit CoreML)
+    public enum Whisper {
+        public static let melSpectrogram = "MelSpectrogram"
+        public static let audioEncoder = "AudioEncoder"
+        public static let textDecoder = "TextDecoder"
+        public static let contextPrefill = "TextDecoderContextPrefill"
+
+        public static let melSpectrogramFile = melSpectrogram + ".mlmodelc"
+        public static let audioEncoderFile = audioEncoder + ".mlmodelc"
+        public static let textDecoderFile = textDecoder + ".mlmodelc"
+        public static let contextPrefillFile = contextPrefill + ".mlmodelc"
+
+        public static let requiredModels: Set<String> = [
+            melSpectrogramFile,
+            audioEncoderFile,
+            textDecoderFile,
+            contextPrefillFile,
+        ]
+    }
+
     /// PocketTTS model names (flow-matching language model TTS)
     public enum PocketTTS {
         public static let condStep = "cond_step"
@@ -413,8 +447,10 @@ public enum ModelNames {
             return ModelNames.PocketTTS.requiredModels
         case .sortformer:
             return ModelNames.Sortformer.requiredModels
-        case .qwen3Asr, .qwen3AsrInt8:
+        case .qwen3Asr, .qwen3AsrInt8, .qwen3Asr17b:
             return ModelNames.Qwen3ASR.requiredModelsFull
+        case .whisperLargeV3Turbo:
+            return ModelNames.Whisper.requiredModels
         }
     }
 }
