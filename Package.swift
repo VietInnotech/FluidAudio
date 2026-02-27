@@ -20,9 +20,15 @@ let package = Package(
             name: "fluidaudiocli",
             targets: ["FluidAudioCLI"]
         ),
+        .executable(
+            name: "fluidaudio-server",
+            targets: ["FluidAudioServer"]
+        ),
     ],
     dependencies: [
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6")
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.20.1"),
+        .package(url: "https://github.com/vapor/multipart-kit.git", from: "4.0.0"),
     ],
     targets: [
         .target(
@@ -71,6 +77,16 @@ let package = Package(
             resources: [
                 .process("Utils/english.json")
             ]
+        ),
+        .executableTarget(
+            name: "FluidAudioServer",
+            dependencies: [
+                "FluidAudio",
+                .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "HummingbirdRouter", package: "hummingbird"),
+                .product(name: "MultipartKit", package: "multipart-kit"),
+            ],
+            path: "Sources/FluidAudioServer"
         ),
         .testTarget(
             name: "FluidAudioTests",

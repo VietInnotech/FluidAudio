@@ -1,0 +1,128 @@
+{
+  "phase_a": {
+    "models": {
+      "fluidaudio-parakeet-v3": [
+        {
+          "file": "sample_000000.mp3",
+          "format": "json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.09751866702572443
+        },
+        {
+          "file": "sample_000000.mp3",
+          "format": "text",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.06575929201790132
+        },
+        {
+          "file": "sample_000000.mp3",
+          "format": "verbose_json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.06245779199525714
+        },
+        {
+          "file": "sample_000001.mp3",
+          "format": "json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.06761733299936168
+        },
+        {
+          "file": "sample_000001.mp3",
+          "format": "text",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.059253707993775606
+        },
+        {
+          "file": "sample_000001.mp3",
+          "format": "verbose_json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.0602952089975588
+        },
+        {
+          "file": "sample_000002.mp3",
+          "format": "json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.05733533299644478
+        },
+        {
+          "file": "sample_000002.mp3",
+          "format": "text",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.05791158298961818
+        },
+        {
+          "file": "sample_000002.mp3",
+          "format": "verbose_json",
+          "status": 200,
+          "ok": true,
+          "has_text": true,
+          "latency": 0.058511334005743265
+        }
+      ]
+    },
+    "negative_tests": {
+      "missing_model": {
+        "status": 400,
+        "passed": true
+      },
+      "invalid_model": {
+        "status": 400,
+        "passed": true
+      },
+      "invalid_api_key": {
+        "status": 401,
+        "passed": true
+      },
+      "concurrent_429": {
+        "statuses": [
+          429,
+          200
+        ],
+        "passed": true
+      }
+    }
+  },
+  "benchmark": {
+    "model": "fluidaudio-parakeet-v3",
+    "total_samples": 10,
+    "successes": 10,
+    "failures": 0,
+    "success_rate": 1.0,
+    "latency": {
+      "mean": 0.059496745702927,
+      "median": 0.059393707997514866,
+      "p50": 0.05979804098024033,
+      "p95": 0.06748879101360217,
+      "min": 0.05092808301560581,
+      "max": 0.06748879101360217
+    },
+    "cer": {
+      "mean": 0.7180172748833349,
+      "median": 0.7051001821493625,
+      "min": 0.5135135135135135,
+      "max": 1.0
+    },
+    "wer": {
+      "mean": 0.9828571428571429,
+      "median": 1.0,
+      "min": 0.9,
+      "max": 1.0
+    }
+  }
+}
