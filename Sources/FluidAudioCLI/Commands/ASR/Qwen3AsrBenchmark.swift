@@ -55,6 +55,9 @@ enum Qwen3AsrBenchmark {
         var languages: [String] = ["cmn_hans_cn"]
         var fleursDir: String? = nil
         var variant: Qwen3AsrVariant = .f32
+        var manifestPath: String? = nil
+        var datasetName: String? = nil
+        var languageHint: Qwen3AsrConfig.Language? = nil
 
         if arguments.contains("--help") || arguments.contains("-h") {
             printUsage()
@@ -112,6 +115,26 @@ enum Qwen3AsrBenchmark {
                     }
                     i += 1
                 }
+            case "--manifest":
+                if i + 1 < arguments.count {
+                    manifestPath = arguments[i + 1]
+                    i += 1
+                }
+            case "--dataset-name":
+                if i + 1 < arguments.count {
+                    datasetName = arguments[i + 1]
+                    i += 1
+                }
+            case "--language", "-l":
+                if i + 1 < arguments.count {
+                    let languageValue = arguments[i + 1]
+                    guard let parsedLanguage = Qwen3AsrConfig.Language(from: languageValue) else {
+                        logger.error("Unknown language '\(languageValue)'. Use a supported Qwen3 language code.")
+                        exit(1)
+                    }
+                    languageHint = parsedLanguage
+                    i += 1
+                }
             default:
                 break
             }
@@ -119,11 +142,18 @@ enum Qwen3AsrBenchmark {
         }
 
         logger.info("Qwen3-ASR Benchmark (2-model pipeline, \(variant.rawValue))")
-        logger.info("  Dataset: \(dataset)")
-        if dataset == "librispeech" {
-            logger.info("  Subset: \(subset)")
+        if let manifestPath {
+            logger.info("  Dataset: custom manifest")
+            logger.info("  Manifest: \(manifestPath)")
+            logger.info("  Dataset label: \(datasetName ?? "manifest")")
+            logger.info("  Language hint: \(languageHint?.rawValue ?? "auto")")
         } else {
-            logger.info("  Languages: \(languages.joined(separator: ", "))")
+            logger.info("  Dataset: \(dataset)")
+            if dataset == "librispeech" {
+                logger.info("  Subset: \(subset)")
+            } else {
+                logger.info("  Languages: \(languages.joined(separator: ", "))")
+            }
         }
         logger.info("  Max files: \(maxFiles?.description ?? "all")")
         logger.info("  Model dir: \(modelDir ?? "auto-download")")
@@ -146,29 +176,40 @@ enum Qwen3AsrBenchmark {
                 try await manager.loadModels(from: cacheDir)
             }
 
-            // 2. Collect files based on dataset
-            switch dataset {
-            case "fleurs":
-                try await runFleursBenchmark(
+            if let manifestPath {
+                try await runManifestBenchmark(
                     manager: manager,
-                    languages: languages,
+                    manifestPath: manifestPath,
                     maxFiles: maxFiles,
-                    fleursDir: fleursDir,
-                    outputFile: outputFile
+                    language: languageHint,
+                    outputFile: outputFile,
+                    datasetName: datasetName
                 )
-            case "aishell":
-                try await runAishellBenchmark(
-                    manager: manager,
-                    maxFiles: maxFiles,
-                    outputFile: outputFile
-                )
-            default:
-                try await runLibriSpeechBenchmark(
-                    manager: manager,
-                    subset: subset,
-                    maxFiles: maxFiles,
-                    outputFile: outputFile
-                )
+            } else {
+                // 2. Collect files based on dataset
+                switch dataset {
+                case "fleurs":
+                    try await runFleursBenchmark(
+                        manager: manager,
+                        languages: languages,
+                        maxFiles: maxFiles,
+                        fleursDir: fleursDir,
+                        outputFile: outputFile
+                    )
+                case "aishell":
+                    try await runAishellBenchmark(
+                        manager: manager,
+                        maxFiles: maxFiles,
+                        outputFile: outputFile
+                    )
+                default:
+                    try await runLibriSpeechBenchmark(
+                        manager: manager,
+                        subset: subset,
+                        maxFiles: maxFiles,
+                        outputFile: outputFile
+                    )
+                }
             }
 
         } catch {
@@ -208,6 +249,41 @@ enum Qwen3AsrBenchmark {
             dataset: "librispeech",
             subset: subset,
             language: nil
+        )
+    }
+
+    // MARK: - Manifest Benchmark
+
+    @available(macOS 15, iOS 18, *)
+    private static func runManifestBenchmark(
+        manager: Qwen3AsrManager,
+        manifestPath: String,
+        maxFiles: Int?,
+        language: Qwen3AsrConfig.Language?,
+        outputFile: String,
+        datasetName: String?
+    ) async throws {
+        let manifestURL = URL(fileURLWithPath: manifestPath)
+        let allFiles = try collectManifestFiles(from: manifestURL)
+        let files = Array(allFiles.prefix(maxFiles ?? allFiles.count))
+        logger.info("Collected \(files.count) files from manifest \(manifestURL.lastPathComponent)")
+
+        let results = try await runBenchmarkLoop(
+            manager: manager,
+            files: files.map { ($0.fileName, $0.audioPath, $0.transcript) },
+            language: language
+        )
+
+        let summary = Qwen3BenchmarkSummary(results: results)
+        let datasetLabel = datasetName ?? manifestURL.lastPathComponent
+        printSummary(summary: summary, datasetLabel: "Manifest \(datasetLabel)")
+        try writeJSON(
+            results: results,
+            summary: summary,
+            outputFile: outputFile,
+            dataset: datasetName ?? "manifest",
+            subset: manifestURL.lastPathComponent,
+            language: language?.rawValue
         )
     }
 
@@ -640,6 +716,91 @@ enum Qwen3AsrBenchmark {
 
     // MARK: - LibriSpeech File Collection
 
+    private static func collectManifestFiles(from manifestPath: URL) throws -> [BenchmarkAudioFile] {
+        let manifestContent = try String(contentsOf: manifestPath)
+        let baseDirectory = manifestPath.deletingLastPathComponent()
+        var files: [BenchmarkAudioFile] = []
+
+        for (index, rawLine) in manifestContent.components(separatedBy: .newlines).enumerated() {
+            let lineNumber = index + 1
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty {
+                continue
+            }
+
+            guard let lineData = line.data(using: .utf8) else {
+                throw Qwen3AsrError.generationFailed(
+                    "Invalid UTF-8 in manifest line \(lineNumber): \(manifestPath.path)"
+                )
+            }
+
+            let jsonObject: Any
+            do {
+                jsonObject = try JSONSerialization.jsonObject(with: lineData, options: [])
+            } catch {
+                throw Qwen3AsrError.generationFailed(
+                    "Invalid JSON in manifest line \(lineNumber): \(error.localizedDescription)"
+                )
+            }
+
+            guard let json = jsonObject as? [String: Any] else {
+                throw Qwen3AsrError.generationFailed(
+                    "Manifest line \(lineNumber) is not a JSON object"
+                )
+            }
+
+            guard let rawAudioPath = json["audio_path"] as? String, !rawAudioPath.isEmpty else {
+                throw Qwen3AsrError.generationFailed(
+                    "Manifest line \(lineNumber) missing required field 'audio_path'"
+                )
+            }
+
+            let transcriptText =
+                (json["transcript"] as? String)
+                ?? (json["transcription"] as? String)
+                ?? (json["text"] as? String)
+                ?? (json["sentence"] as? String)
+                ?? ""
+            let transcript = transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if transcript.isEmpty {
+                logger.warning("Skipping manifest line \(lineNumber): empty transcript")
+                continue
+            }
+
+            let resolvedPath: String
+            if rawAudioPath.hasPrefix("/") || rawAudioPath.hasPrefix("~") {
+                resolvedPath = (rawAudioPath as NSString).expandingTildeInPath
+            } else {
+                resolvedPath = baseDirectory.appendingPathComponent(rawAudioPath).path
+            }
+
+            let audioPath = URL(fileURLWithPath: resolvedPath).standardizedFileURL
+            guard FileManager.default.fileExists(atPath: audioPath.path) else {
+                logger.warning("Skipping manifest line \(lineNumber): audio file not found at \(audioPath.path)")
+                continue
+            }
+
+            let fileName =
+                (json["file_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? audioPath.lastPathComponent
+
+            files.append(
+                BenchmarkAudioFile(
+                    fileName: fileName.isEmpty ? audioPath.lastPathComponent : fileName,
+                    audioPath: audioPath,
+                    transcript: transcript
+                )
+            )
+        }
+
+        if files.isEmpty {
+            throw Qwen3AsrError.generationFailed("No valid entries found in manifest: \(manifestPath.path)")
+        }
+
+        return files.sorted { $0.fileName < $1.fileName }
+    }
+
     private static func collectBenchmarkAudioFiles(from directory: URL) throws -> [BenchmarkAudioFile] {
         var files: [BenchmarkAudioFile] = []
         let fileManager = FileManager.default
@@ -687,8 +848,11 @@ enum Qwen3AsrBenchmark {
 
             Options:
                 --dataset <name>        Dataset: librispeech (default), fleurs, or aishell
+                --manifest <file>       JSONL manifest with `audio_path` + transcript field(s)
+                --dataset-name <name>   Label to store in output JSON for custom manifests
                 --subset <name>         LibriSpeech subset (default: test-clean)
                 --languages <list>      FLEURS language codes, comma-separated (default: cmn_hans_cn)
+                --language, -l <code>   Language hint for custom manifest mode (default: auto)
                 --max-files <number>    Max files to process (default: all)
                 --model-dir <path>      Local model directory (skips download)
                 --variant <f32|int8>    Model variant (default: f32). int8 uses ~50% less RAM.
@@ -711,6 +875,9 @@ enum Qwen3AsrBenchmark {
                 # Multiple languages (FLEURS)
                 fluidaudio qwen3-benchmark --dataset fleurs --languages cmn_hans_cn,ja_jp,ko_kr
 
+                # Custom manifest benchmark with Vietnamese language hint
+                fluidaudio qwen3-benchmark --manifest fpt_fosd_manifest.jsonl --dataset-name fpt_fosd --language vi
+
             Supported FLEURS languages (30 Qwen3 languages, all auto-download):
 
             Asian (13 languages):
@@ -729,6 +896,11 @@ enum Qwen3AsrBenchmark {
                 sv_se   Swedish         da_dk   Danish          fi_fi   Finnish
                 cs_cz   Czech           el_gr   Greek           hu_hu   Hungarian
                 ro_ro   Romanian        mk_mk   Macedonian
+
+            Manifest format:
+                One JSON object per line:
+                {"audio_path": "/abs/or/relative/path.wav", "transcript": "reference text"}
+                Accepted transcript keys: transcript, transcription, text, sentence
 
             All languages auto-download from FluidInference/fleurs-full.
             """

@@ -1,0 +1,17 @@
+{
+  "timestamp": "20260226_153542",
+  "mode": "hf-prepare-only",
+  "dataset": {
+    "dataset": "doof-ferb/fpt_fosd",
+    "config": "default",
+    "split": "train",
+    "audioColumn": "audio",
+    "textColumn": "transcription",
+    "rowsRequested": 3,
+    "rowsMaterialized": 3,
+    "rowsSkipped": 0,
+    "totalAudioSeconds": null,
+    "manifestPath": "benchmark-results/hf_smoke/hf_materialized/manifest.jsonl"
+  },
+  "manifestPath": "benchmark-results/hf_smoke/hf_materialized/manifest.jsonl"
+}

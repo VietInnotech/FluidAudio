@@ -73,7 +73,8 @@ public class ASRBenchmark {
 
     /// Run ASR benchmark on LibriSpeech
     public func runLibriSpeechBenchmark(
-        asrManager: AsrManager, subset: String = "test-clean", singleFile: String? = nil
+        asrManager: AsrManager, subset: String = "test-clean", singleFile: String? = nil,
+        autoDownload: Bool = true
     )
         async throws -> [ASRBenchmarkResult]
     {
@@ -86,8 +87,9 @@ public class ASRBenchmark {
         logger.info("Running in RELEASE mode - optimal performance")
         #endif
 
-        // Ensure dataset is downloaded
-        try await downloadLibriSpeech(subset: subset)
+        if autoDownload {
+            try await downloadLibriSpeech(subset: subset)
+        }
 
         let datasetPath = getLibriSpeechDirectory().appendingPathComponent(subset)
         let audioFiles = try collectLibriSpeechFiles(from: datasetPath)
@@ -133,6 +135,149 @@ public class ASRBenchmark {
         logger.info(
             "Running ASR benchmark on \(filesToProcess.count) files from LibriSpeech \(subset)")
 
+        return try await runBenchmarkLoop(asrManager: asrManager, filesToProcess: filesToProcess)
+    }
+
+    /// Run ASR benchmark against a JSONL manifest with `audio_path` and transcript text fields.
+    public func runManifestBenchmark(
+        asrManager: AsrManager, manifestPath: URL, singleFile: String? = nil
+    ) async throws -> [ASRBenchmarkResult] {
+        #if DEBUG
+        logger.warning("WARNING: Running in DEBUG mode!")
+        logger.warning("For accurate benchmarks, use: swift run -c release fluidaudio asr-benchmark")
+        try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
+        #else
+        logger.info("Running in RELEASE mode - optimal performance")
+        #endif
+
+        let manifestFiles = try loadManifestFiles(from: manifestPath)
+        var filteredFiles = manifestFiles
+
+        if let singleFileName = singleFile {
+            let requestedPath = URL(fileURLWithPath: singleFileName).standardizedFileURL.path
+            filteredFiles = manifestFiles.filter { file in
+                file.fileName == singleFileName
+                    || file.audioPath.lastPathComponent == singleFileName
+                    || file.fileName == "\(singleFileName).wav"
+                    || file.fileName == "\(singleFileName).flac"
+                    || file.audioPath.standardizedFileURL.path == requestedPath
+            }
+
+            if filteredFiles.isEmpty {
+                throw ASRError.processingFailed(
+                    "Single file '\(singleFileName)' not found in manifest \(manifestPath.path)")
+            }
+
+            logger.info("🔍 Processing single file from manifest: \(singleFileName)")
+        } else if config.longAudioOnly {
+            filteredFiles = try await filterFilesByDuration(
+                filteredFiles, minDuration: 4.0, maxDuration: 20.0)
+            logger.info(
+                "Filtered to \(filteredFiles.count) files with duration 4-20 seconds (from \(manifestFiles.count) total)"
+            )
+        }
+
+        let maxFiles = singleFile != nil ? filteredFiles.count : (config.maxFiles ?? filteredFiles.count)
+        let filesToProcess = Array(filteredFiles.prefix(maxFiles))
+
+        logger.info(
+            "📋 Processing \(filesToProcess.count) files (max files limit: \(config.maxFiles?.description ?? "unlimited"))"
+        )
+
+        logger.info(
+            "Running ASR benchmark on \(filesToProcess.count) files from manifest \(manifestPath.lastPathComponent)"
+        )
+
+        return try await runBenchmarkLoop(asrManager: asrManager, filesToProcess: filesToProcess)
+    }
+
+    /// Load benchmark entries from JSONL lines.
+    /// Required fields per line: `audio_path` and one of `transcript`, `transcription`, `text`, `sentence`.
+    public func loadManifestFiles(from manifestPath: URL) throws -> [LibriSpeechFile] {
+        let manifestContent = try String(contentsOf: manifestPath)
+        let baseDirectory = manifestPath.deletingLastPathComponent()
+        var files: [LibriSpeechFile] = []
+
+        for (index, rawLine) in manifestContent.components(separatedBy: .newlines).enumerated() {
+            let lineNumber = index + 1
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if line.isEmpty {
+                continue
+            }
+
+            guard let lineData = line.data(using: .utf8) else {
+                throw ASRError.processingFailed(
+                    "Invalid UTF-8 in manifest line \(lineNumber): \(manifestPath.path)")
+            }
+
+            let jsonObject: Any
+            do {
+                jsonObject = try JSONSerialization.jsonObject(with: lineData, options: [])
+            } catch {
+                throw ASRError.processingFailed(
+                    "Invalid JSON in manifest line \(lineNumber): \(error.localizedDescription)")
+            }
+
+            guard let json = jsonObject as? [String: Any] else {
+                throw ASRError.processingFailed(
+                    "Manifest line \(lineNumber) is not a JSON object: \(manifestPath.path)")
+            }
+
+            guard let rawAudioPath = json["audio_path"] as? String, !rawAudioPath.isEmpty else {
+                throw ASRError.processingFailed(
+                    "Manifest line \(lineNumber) is missing required field 'audio_path'")
+            }
+
+            let transcriptText =
+                (json["transcript"] as? String)
+                ?? (json["transcription"] as? String)
+                ?? (json["text"] as? String)
+                ?? (json["sentence"] as? String)
+                ?? ""
+            let transcript = transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if transcript.isEmpty {
+                logger.warning("Skipping manifest line \(lineNumber): empty transcript")
+                continue
+            }
+
+            let resolvedPath: String
+            if rawAudioPath.hasPrefix("/") || rawAudioPath.hasPrefix("~") {
+                resolvedPath = (rawAudioPath as NSString).expandingTildeInPath
+            } else {
+                resolvedPath = baseDirectory.appendingPathComponent(rawAudioPath).path
+            }
+
+            let audioPath = URL(fileURLWithPath: resolvedPath).standardizedFileURL
+            guard FileManager.default.fileExists(atPath: audioPath.path) else {
+                logger.warning("Skipping manifest line \(lineNumber): audio file not found at \(audioPath.path)")
+                continue
+            }
+
+            let fileName =
+                (json["file_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? audioPath.lastPathComponent
+
+            files.append(
+                LibriSpeechFile(
+                    fileName: fileName.isEmpty ? audioPath.lastPathComponent : fileName,
+                    audioPath: audioPath,
+                    transcript: transcript
+                ))
+        }
+
+        if files.isEmpty {
+            throw ASRError.processingFailed(
+                "No valid entries found in manifest: \(manifestPath.path)")
+        }
+
+        return files.sorted { $0.fileName < $1.fileName }
+    }
+
+    private func runBenchmarkLoop(
+        asrManager: AsrManager, filesToProcess: [LibriSpeechFile]
+    ) async throws -> [ASRBenchmarkResult] {
         var results: [ASRBenchmarkResult] = []
 
         // Initialize Streaming EOU Manager if needed
@@ -757,6 +902,8 @@ extension ASRBenchmark {
         var streamingChunkDuration = 10.0
         var useStreamingEou = false
         var modelVersion: AsrModelVersion = .v3  // Default to v3
+        var manifestPath: String?
+        var datasetName: String?
 
         // Check for help flag first
         if arguments.contains("--help") || arguments.contains("-h") {
@@ -785,6 +932,16 @@ extension ASRBenchmark {
             case "--output":
                 if i + 1 < arguments.count {
                     outputFile = arguments[i + 1]
+                    i += 1
+                }
+            case "--manifest":
+                if i + 1 < arguments.count {
+                    manifestPath = arguments[i + 1]
+                    i += 1
+                }
+            case "--dataset-name":
+                if i + 1 < arguments.count {
+                    datasetName = arguments[i + 1]
                     i += 1
                 }
             case "--debug":
@@ -827,9 +984,15 @@ extension ASRBenchmark {
             i += 1
         }
 
-        logger.info("Starting ASR benchmark on LibriSpeech \(subset)")
-        if singleFile != nil {
-            logger.info("   Processing single file: \(singleFile!)")
+        if let manifestPath {
+            logger.info("Starting ASR benchmark on custom manifest")
+            logger.info("   Manifest: \(manifestPath)")
+            logger.info("   Dataset label: \(datasetName ?? "manifest")")
+        } else {
+            logger.info("Starting ASR benchmark on LibriSpeech \(subset)")
+        }
+        if let singleFile {
+            logger.info("   Processing single file: \(singleFile)")
         } else {
             logger.info("   Max files: \(maxFiles?.description ?? "all")")
         }
@@ -843,9 +1006,19 @@ extension ASRBenchmark {
             logger.info("   Chunk duration: \(streamingChunkDuration)s")
         }
 
+        let datasetValue: String
+        let subsetValue: String
+        if let manifestPath {
+            datasetValue = datasetName ?? "manifest"
+            subsetValue = URL(fileURLWithPath: manifestPath).lastPathComponent
+        } else {
+            datasetValue = "librispeech"
+            subsetValue = subset
+        }
+
         let config = ASRBenchmarkConfig(
-            dataset: "librispeech",
-            subset: subset,
+            dataset: datasetValue,
+            subset: subsetValue,
             maxFiles: maxFiles,
             debugMode: debugMode,
             longAudioOnly: false,
@@ -931,12 +1104,22 @@ extension ASRBenchmark {
                 throw error
             }
 
-            if autoDownload {
-                try await benchmark.downloadLibriSpeech(subset: subset)
+            let results: [ASRBenchmarkResult]
+            if let manifestPath {
+                let manifestURL = URL(fileURLWithPath: manifestPath)
+                results = try await benchmark.runManifestBenchmark(
+                    asrManager: asrManager,
+                    manifestPath: manifestURL,
+                    singleFile: singleFile
+                )
+            } else {
+                results = try await benchmark.runLibriSpeechBenchmark(
+                    asrManager: asrManager,
+                    subset: subset,
+                    singleFile: singleFile,
+                    autoDownload: autoDownload
+                )
             }
-
-            let results = try await benchmark.runLibriSpeechBenchmark(
-                asrManager: asrManager, subset: subset, singleFile: singleFile)
 
             let totalWER = results.reduce(0.0) { $0 + $1.metrics.wer } / Double(results.count)
             let totalCER = results.reduce(0.0) { $0 + $1.metrics.cer } / Double(results.count)
@@ -1109,6 +1292,8 @@ extension ASRBenchmark {
             Options:
                 --subset <name>           LibriSpeech subset to use (default: test-clean)
                                          Available: test-clean, test-other, dev-clean, dev-other
+                --manifest <file>         JSONL manifest with `audio_path` + transcript field(s)
+                --dataset-name <name>     Label to store in output JSON for custom manifests
                 --max-files <number>      Maximum number of files to process (default: all)
                 --single-file <id>        Process only a specific file (e.g., 1089-134686-0011)
                 --output <file>           Output JSON file path (default: asr_benchmark_results.json)
@@ -1122,8 +1307,8 @@ extension ASRBenchmark {
 
             Description:
                 The ASR benchmark command evaluates Automatic Speech Recognition performance
-                on the LibriSpeech dataset, calculating WER (Word Error Rate) and CER
-                (Character Error Rate) metrics, along with processing speed (RTFx).
+                on LibriSpeech (or a custom manifest), calculating WER (Word Error Rate),
+                CER (Character Error Rate), and processing speed (RTFx).
 
             Streaming Mode:
                 When --test-streaming is enabled, the benchmark simulates real-time streaming
@@ -1144,18 +1329,27 @@ extension ASRBenchmark {
                 fluidaudio asr-benchmark --single-file 1089-134686-0011 --debug
 
                 # Test streaming performance with 0.5s chunks
-                fluidaudio asr-benchmark --test-streaming --chunk-duration 1-
+                fluidaudio asr-benchmark --test-streaming --chunk-duration 1.0
 
                 # Debug mode with custom output file
                 fluidaudio asr-benchmark --debug --output my_results.json
+
+                # Benchmark custom dataset from JSONL manifest
+                fluidaudio asr-benchmark --manifest fpt_fosd_manifest.jsonl --dataset-name fpt_fosd --max-files 200
 
             Expected Performance:
                 - test-clean: 2-6% WER for good ASR systems
                 - test-other: 5-15% WER for good ASR systems
                 - RTFx: >1x indicates faster than real-time processing
 
-            Note: First run will download LibriSpeech dataset (~1.1GB for test-clean).
-                  ASR models will be downloaded automatically if not present.
+            Manifest Format:
+                One JSON object per line:
+                {"audio_path": "/abs/or/relative/path.wav", "transcript": "reference text"}
+                Accepted transcript keys: transcript, transcription, text, sentence
+
+            Note:
+                - LibriSpeech mode can auto-download dataset assets.
+                - ASR models will be downloaded automatically if not present.
             """
         )
     }
