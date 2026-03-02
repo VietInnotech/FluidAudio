@@ -38,6 +38,7 @@ actor TranscriptionService {
     private var currentModel: ModelID?
     // AsrManager is a class (not Sendable). We guarantee single-access via the actor.
     nonisolated(unsafe) private var parakeetManager: AsrManager?
+    private var parakeetVadManager: VadManager?
     // Stored as Any to avoid propagating @available requirement on the actor
     private var qwen3Backend: Any?
     private var ctcManager: CtcAsrManager?
@@ -88,7 +89,15 @@ actor TranscriptionService {
             guard let manager = parakeetManager else {
                 throw ServerError.internalError("Parakeet manager not initialized")
             }
-            let result = try await manager.transcribe(audioSamples, source: .system)
+            guard let vadManager = parakeetVadManager else {
+                throw ServerError.internalError("Parakeet VAD manager not initialized")
+            }
+            let result = try await manager.transcribeWithVad(
+                audioSamples,
+                vadManager: vadManager,
+                source: .system,
+                segmentationConfig: .asrOptimized
+            )
             text = result.text
 
         case .qwen3:
@@ -135,12 +144,14 @@ actor TranscriptionService {
             let manager = AsrManager()
             try await manager.initialize(models: models)
             parakeetManager = manager
+            parakeetVadManager = try await VadManager(config: .default)
 
         case .parakeetV3:
             let models = try await AsrModels.downloadAndLoad(version: .v3)
             let manager = AsrManager()
             try await manager.initialize(models: models)
             parakeetManager = manager
+            parakeetVadManager = try await VadManager(config: .default)
 
         case .qwen3F32:
             guard #available(macOS 15, *) else {
@@ -177,6 +188,7 @@ actor TranscriptionService {
             manager.cleanup()
             parakeetManager = nil
         }
+        parakeetVadManager = nil
         qwen3Backend = nil
         ctcManager = nil
         currentModel = nil

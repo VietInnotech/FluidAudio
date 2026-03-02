@@ -20,6 +20,7 @@ public actor StreamingAsrManager {
     // AsrManager contains CoreML models which are not Sendable.
     // We manage the safety ourselves by only accessing it from within the actor.
     nonisolated(unsafe) private var asrManager: AsrManager?
+    private var vadManager: VadManager?
     private var recognizerTask: Task<Void, Error>?
     private var audioSource: AudioSource = .microphone
 
@@ -45,6 +46,7 @@ public actor StreamingAsrManager {
     // Metrics
     private var startTime: Date?
     private var processedChunks: Int = 0
+    private var skippedChunksByVAD: Int = 0
 
     // Vocabulary boosting
     // These are initialized via configureVocabularyBoosting() before start()
@@ -139,6 +141,14 @@ public actor StreamingAsrManager {
         asrManager = AsrManager(config: config.asrConfig)
         try await asrManager?.initialize(models: models)
 
+        if config.vadGateEnabled {
+            vadManager = try await VadManager(
+                config: VadConfig(defaultThreshold: config.vadGateThreshold)
+            )
+        } else {
+            vadManager = nil
+        }
+
         // Reset decoder state for the specific source
         try await asrManager?.resetDecoderState(for: source)
 
@@ -146,6 +156,7 @@ public actor StreamingAsrManager {
         segmentIndex = 0
         lastProcessedFrame = 0
         accumulatedTokens.removeAll()
+        skippedChunksByVAD = 0
 
         startTime = Date()
 
@@ -248,6 +259,7 @@ public actor StreamingAsrManager {
         volatileTranscript = ""
         confirmedTranscript = ""
         processedChunks = 0
+        skippedChunksByVAD = 0
         startTime = Date()
         sampleBuffer.removeAll(keepingCapacity: false)
         bufferStartIndex = 0
@@ -291,7 +303,6 @@ public actor StreamingAsrManager {
         let chunk = config.chunkSamples
         let right = config.rightContextSamples
         let left = config.leftContextSamples
-        let sampleRate = config.asrConfig.sampleRate
 
         var currentAbsEnd = bufferStartIndex + sampleBuffer.count
         while currentAbsEnd >= (nextWindowCenterStart + chunk + right) {
@@ -325,7 +336,6 @@ public actor StreamingAsrManager {
     private func flushRemaining() async {
         let chunk = config.chunkSamples
         let left = config.leftContextSamples
-        let sampleRate = config.asrConfig.sampleRate
 
         var currentAbsEnd = bufferStartIndex + sampleBuffer.count
         while currentAbsEnd > nextWindowCenterStart {  // process until we exhaust
@@ -369,6 +379,17 @@ public actor StreamingAsrManager {
         isLastChunk: Bool = false
     ) async {
         guard let asrManager = asrManager else { return }
+
+        if config.vadGateEnabled {
+            let shouldProcess = await shouldProcessWindowWithVAD(windowSamples)
+            if !shouldProcess {
+                skippedChunksByVAD += 1
+                logger.debug(
+                    "Skipping streaming window due to VAD gate (skipped=\(self.skippedChunksByVAD), processed=\(self.processedChunks))"
+                )
+                return
+            }
+        }
 
         do {
             let chunkStartTime = Date()
@@ -579,6 +600,24 @@ public actor StreamingAsrManager {
         return timestamps.map { $0 + frameOffset }
     }
 
+    internal static func hasSpeech(probabilities: [Float], threshold: Float) -> Bool {
+        guard !probabilities.isEmpty else { return false }
+        return probabilities.contains { $0 >= threshold }
+    }
+
+    private func shouldProcessWindowWithVAD(_ windowSamples: [Float]) async -> Bool {
+        guard let vadManager = vadManager else { return true }
+
+        do {
+            let vadResults = try await vadManager.process(windowSamples)
+            let probabilities = vadResults.map { $0.probability }
+            return Self.hasSpeech(probabilities: probabilities, threshold: config.vadGateThreshold)
+        } catch {
+            logger.warning("VAD gate failed, falling back to ASR processing: \(error.localizedDescription)")
+            return true
+        }
+    }
+
     /// Attempt to recover from processing errors
     private func attemptErrorRecovery(error: Error) async {
         logger.warning("Attempting error recovery for: \(error)")
@@ -653,6 +692,10 @@ public struct StreamingAsrConfig: Sendable {
 
     /// Confidence threshold for promoting volatile text to confirmed (0.0...1.0)
     public let confirmationThreshold: Double
+    /// Enables VAD-based gating of ASR windows in streaming mode.
+    public let vadGateEnabled: Bool
+    /// VAD probability threshold for gating decisions when `vadGateEnabled` is true.
+    public let vadGateThreshold: Float
     /// Default configuration aligned with previous API expectations
     public static let `default` = StreamingAsrConfig(
         chunkSeconds: 15.0,
@@ -660,7 +703,9 @@ public struct StreamingAsrConfig: Sendable {
         leftContextSeconds: 10.0,
         rightContextSeconds: 2.0,
         minContextForConfirmation: 10.0,
-        confirmationThreshold: 0.85
+        confirmationThreshold: 0.85,
+        vadGateEnabled: true,
+        vadGateThreshold: 0.5
     )
 
     /// Optimized streaming configuration: Dual-track processing for best experience
@@ -672,7 +717,9 @@ public struct StreamingAsrConfig: Sendable {
         leftContextSeconds: 2.0,  // Match ChunkProcessor left context
         rightContextSeconds: 2.0,  // Match ChunkProcessor right context
         minContextForConfirmation: 10.0,  // Need sufficient context before confirming
-        confirmationThreshold: 0.80  // Higher threshold for more stable confirmations
+        confirmationThreshold: 0.80,  // Higher threshold for more stable confirmations
+        vadGateEnabled: true,
+        vadGateThreshold: 0.5
     )
 
     public init(
@@ -681,7 +728,9 @@ public struct StreamingAsrConfig: Sendable {
         leftContextSeconds: TimeInterval = 2.0,
         rightContextSeconds: TimeInterval = 2.0,
         minContextForConfirmation: TimeInterval = 10.0,
-        confirmationThreshold: Double = 0.85
+        confirmationThreshold: Double = 0.85,
+        vadGateEnabled: Bool = true,
+        vadGateThreshold: Float = 0.5
     ) {
         self.chunkSeconds = chunkSeconds
         self.hypothesisChunkSeconds = hypothesisChunkSeconds
@@ -689,6 +738,8 @@ public struct StreamingAsrConfig: Sendable {
         self.rightContextSeconds = rightContextSeconds
         self.minContextForConfirmation = minContextForConfirmation
         self.confirmationThreshold = confirmationThreshold
+        self.vadGateEnabled = vadGateEnabled
+        self.vadGateThreshold = vadGateThreshold
     }
 
     /// Backward-compatible convenience initializer used by tests (chunkDuration label)
@@ -702,7 +753,9 @@ public struct StreamingAsrConfig: Sendable {
             leftContextSeconds: 10.0,
             rightContextSeconds: 2.0,
             minContextForConfirmation: 10.0,
-            confirmationThreshold: confirmationThreshold
+            confirmationThreshold: confirmationThreshold,
+            vadGateEnabled: true,
+            vadGateThreshold: 0.5
         )
     }
 
@@ -717,7 +770,9 @@ public struct StreamingAsrConfig: Sendable {
             leftContextSeconds: 10.0,
             rightContextSeconds: 2.0,
             minContextForConfirmation: 10.0,
-            confirmationThreshold: confirmationThreshold
+            confirmationThreshold: confirmationThreshold,
+            vadGateEnabled: true,
+            vadGateThreshold: 0.5
         )
     }
 

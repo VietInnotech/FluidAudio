@@ -280,8 +280,10 @@ enum TranscribeCommand {
             let models = try await AsrModels.downloadAndLoad(version: modelVersion)
             let asrManager = AsrManager(config: .default)
             try await asrManager.initialize(models: models)
+            let vadManager = try await VadManager(config: .default)
 
             logger.info("ASR Manager initialized successfully")
+            logger.info("VAD pre-segmentation enabled by default")
 
             // Load audio file
             let audioFileURL = URL(fileURLWithPath: audioFile)
@@ -305,8 +307,21 @@ enum TranscribeCommand {
             // Process with ASR Manager
             logger.info("Transcribing file: \(audioFileURL) ...")
             let startTime = Date()
-            var result = try await asrManager.transcribe(audioFileURL)
+            let vadResult = try await asrManager.transcribeWithVad(
+                samples,
+                vadManager: vadManager,
+                source: .system,
+                segmentationConfig: .asrOptimized
+            )
             let processingTime = Date().timeIntervalSince(startTime)
+
+            var asrResult = ASRResult(
+                text: vadResult.text,
+                confidence: vadResult.confidence,
+                duration: vadResult.audioDuration,
+                processingTime: vadResult.processingTime,
+                tokenTimings: vadResult.segments.flatMap(\.tokenTimings)
+            )
 
             // Apply vocabulary rescoring if custom vocab is provided
             if let vocabPath = customVocabPath {
@@ -329,7 +344,7 @@ enum TranscribeCommand {
 
                 // Create rescorer and apply constrained CTC rescoring
                 let logProbs = spotResult.logProbs
-                if let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty, !logProbs.isEmpty {
+                if let tokenTimings = asrResult.tokenTimings, !tokenTimings.isEmpty, !logProbs.isEmpty {
                     let ctcModelDir = CtcModels.defaultCacheDirectory(for: ctcModels.variant)
 
                     let vocabConfig = ContextBiasingConstants.rescorerConfig(forVocabSize: customVocab.terms.count)
@@ -347,7 +362,7 @@ enum TranscribeCommand {
                     let cbw = vocabConfig.cbw
 
                     let rescoreOutput = rescorer.ctcTokenRescore(
-                        transcript: result.text,
+                        transcript: asrResult.text,
                         tokenTimings: tokenTimings,
                         logProbs: logProbs,
                         frameDuration: spotResult.frameDuration,
@@ -363,12 +378,12 @@ enum TranscribeCommand {
                                 "  '\(replacement.originalWord)' → '\(replacement.replacementWord ?? "")' (score: \(String(format: "%.2f", replacement.replacementScore ?? 0)))"
                             )
                         }
-                        result = ASRResult(
+                        asrResult = ASRResult(
                             text: rescoreOutput.text,
-                            confidence: result.confidence,
-                            duration: result.duration,
-                            processingTime: result.processingTime,
-                            tokenTimings: result.tokenTimings
+                            confidence: asrResult.confidence,
+                            duration: asrResult.duration,
+                            processingTime: asrResult.processingTime,
+                            tokenTimings: asrResult.tokenTimings
                         )
                     } else {
                         logger.info("No vocabulary replacements made")
@@ -381,20 +396,20 @@ enum TranscribeCommand {
             logger.info("BATCH TRANSCRIPTION RESULTS")
             logger.info(String(repeating: "=", count: 50))
             logger.info("Final transcription:")
-            print(result.text)
+            print(asrResult.text)
 
             if let outputJsonPath = outputJsonPath {
-                let wordTimings = WordTimingMerger.mergeTokensIntoWords(result.tokenTimings ?? [])
+                let wordTimings = WordTimingMerger.mergeTokensIntoWords(asrResult.tokenTimings ?? [])
                 let modelVersionLabel = modelVersion == .v2 ? "v2" : "v3"
                 let output = TranscriptionJSONOutput(
                     audioFile: audioFile,
                     mode: "batch",
                     modelVersion: modelVersionLabel,
-                    text: result.text,
-                    durationSeconds: result.duration,
-                    processingTimeSeconds: result.processingTime,
-                    rtfx: result.rtfx,
-                    confidence: result.confidence,
+                    text: asrResult.text,
+                    durationSeconds: asrResult.duration,
+                    processingTimeSeconds: asrResult.processingTime,
+                    rtfx: asrResult.rtfx,
+                    confidence: asrResult.confidence,
                     wordTimings: wordTimings,
                     timingsConfirmed: nil
                 )
@@ -404,7 +419,7 @@ enum TranscribeCommand {
 
             // Print word-level timestamps if requested
             if wordTimestamps {
-                if let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty {
+                if let tokenTimings = asrResult.tokenTimings, !tokenTimings.isEmpty {
                     let wordTimings = WordTimingMerger.mergeTokensIntoWords(tokenTimings)
                     logger.info("\nWord-level timestamps:")
                     for (index, word) in wordTimings.enumerated() {
@@ -419,11 +434,13 @@ enum TranscribeCommand {
 
             if showMetadata {
                 logger.info("Metadata:")
-                logger.info("  Confidence: \(String(format: "%.3f", result.confidence))")
-                logger.info("  Duration: \(String(format: "%.3f", result.duration))s")
-                if let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty {
+                logger.info("  Confidence: \(String(format: "%.3f", asrResult.confidence))")
+                logger.info("  Duration: \(String(format: "%.3f", asrResult.duration))s")
+                logger.info("  VAD speech ratio: \(String(format: "%.1f", vadResult.speechRatio * 100))%")
+                logger.info("  VAD segments: \(vadResult.vadSegments.count)")
+                if let tokenTimings = asrResult.tokenTimings, !tokenTimings.isEmpty {
                     let startTime = tokenTimings.first?.startTime ?? 0.0
-                    let endTime = tokenTimings.last?.endTime ?? result.duration
+                    let endTime = tokenTimings.last?.endTime ?? asrResult.duration
                     logger.info("  Start time: \(String(format: "%.3f", startTime))s")
                     logger.info("  End time: \(String(format: "%.3f", endTime))s")
                     logger.info("Token Timings:")
@@ -434,7 +451,7 @@ enum TranscribeCommand {
                     }
                 } else {
                     logger.info("  Start time: 0.000s")
-                    logger.info("  End time: \(String(format: "%.3f", result.duration))s")
+                    logger.info("  End time: \(String(format: "%.3f", asrResult.duration))s")
                     logger.info("  Token timings: Not available")
                 }
             }
@@ -446,10 +463,10 @@ enum TranscribeCommand {
             logger.info("  Processing time: \(String(format: "%.2f", processingTime))s")
             logger.info("  RTFx: \(String(format: "%.2f", rtfx))x")
             if !showMetadata {
-                logger.info("  Confidence: \(String(format: "%.3f", result.confidence))")
+                logger.info("  Confidence: \(String(format: "%.3f", asrResult.confidence))")
             }
 
-            if let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty {
+            if let tokenTimings = asrResult.tokenTimings, !tokenTimings.isEmpty {
                 let debugDump = tokenTimings.enumerated().map { index, timing in
                     let start = String(format: "%.3f", timing.startTime)
                     let end = String(format: "%.3f", timing.endTime)
@@ -758,7 +775,6 @@ enum TranscribeCommand {
             - Shows confidence score for transcription accuracy
             - Batch mode: Shows duration and token-based start/end times (if available)
             - Streaming mode: Shows timestamps for each transcription update
-            - Works with both batch and streaming modes
 
             Word timestamps option:
             - Shows start and end times for each word in the transcription

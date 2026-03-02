@@ -45,6 +45,8 @@ final class StreamingAsrManagerTests: XCTestCase {
         let defaultConfig = StreamingAsrConfig.default
         XCTAssertEqual(defaultConfig.confirmationThreshold, 0.85)
         XCTAssertEqual(defaultConfig.chunkDuration, 15.0)
+        XCTAssertTrue(defaultConfig.vadGateEnabled)
+        XCTAssertEqual(defaultConfig.vadGateThreshold, 0.5)
     }
 
     func testConfigCalculatedProperties() {
@@ -216,6 +218,38 @@ final class StreamingAsrManagerTests: XCTestCase {
 
         XCTAssertEqual(customConfig.chunkDuration, 7.5)
         XCTAssertEqual(customConfig.confirmationThreshold, 0.8)
+        XCTAssertTrue(customConfig.vadGateEnabled)
+    }
+
+    func testConfigSupportsVadGateSettings() {
+        let config = StreamingAsrConfig(
+            chunkSeconds: 11.0,
+            hypothesisChunkSeconds: 1.0,
+            leftContextSeconds: 2.0,
+            rightContextSeconds: 2.0,
+            minContextForConfirmation: 10.0,
+            confirmationThreshold: 0.8,
+            vadGateEnabled: true,
+            vadGateThreshold: 0.42
+        )
+
+        XCTAssertTrue(config.vadGateEnabled)
+        XCTAssertEqual(config.vadGateThreshold, 0.42, accuracy: 0.0001)
+    }
+
+    func testHasSpeechProbabilityGate() {
+        XCTAssertFalse(
+            StreamingAsrManager.hasSpeech(probabilities: [], threshold: 0.5)
+        )
+        XCTAssertFalse(
+            StreamingAsrManager.hasSpeech(probabilities: [0.1, 0.2, 0.49], threshold: 0.5)
+        )
+        XCTAssertTrue(
+            StreamingAsrManager.hasSpeech(probabilities: [0.1, 0.5, 0.2], threshold: 0.5)
+        )
+        XCTAssertTrue(
+            StreamingAsrManager.hasSpeech(probabilities: [0.9], threshold: 0.5)
+        )
     }
 
     // MARK: - Performance Tests
