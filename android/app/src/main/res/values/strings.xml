@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FluidAudio Transcriber</string>
+    <string name="bubble_description">Transcription bubble</string>
+    <string name="close_panel">Close panel</string>
+    <string name="record">Record</string>
+    <string name="pick_file">Pick audio file</string>
+</resources>

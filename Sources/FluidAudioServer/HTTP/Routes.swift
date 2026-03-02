@@ -84,6 +84,12 @@ func registerRoutes(
             throw ServerError.badRequest("Audio file is empty or could not be decoded")
         }
 
+        let audioDurationSeconds = Double(audioSamples.count) / 16_000.0
+        let transcribeMsg =
+            "transcribing: model=\(modelID.rawValue) lang=\(parts.language ?? "auto")"
+            + " file=\(formatBytes(fileData.count)) audio=\(String(format: "%.1f", audioDurationSeconds))s"
+        context.logger.info("\(transcribeMsg)")
+
         // Transcribe
         let result = try await service.transcribe(
             audioSamples: audioSamples,
@@ -91,8 +97,26 @@ func registerRoutes(
             language: parts.language
         )
 
+        let rtfx = result.duration / result.processingTime
+        let doneMsg =
+            "done: \(String(format: "%.1f", result.duration))s audio"
+            + " → \(String(format: "%.3f", result.processingTime))s"
+            + " (RTFx \(String(format: "%.1f", rtfx))x)"
+            + " \(result.text.count) chars"
+        context.logger.info("\(doneMsg)")
+
         // Format response
         return try formatResponse(result: result, format: responseFormat)
+    }
+}
+
+// MARK: - Formatting Helpers
+
+private func formatBytes(_ bytes: Int) -> String {
+    switch bytes {
+    case ..<1_024: return "\(bytes) B"
+    case ..<(1_024 * 1_024): return String(format: "%.1f KB", Double(bytes) / 1_024)
+    default: return String(format: "%.1f MB", Double(bytes) / 1_024 / 1_024)
     }
 }
 

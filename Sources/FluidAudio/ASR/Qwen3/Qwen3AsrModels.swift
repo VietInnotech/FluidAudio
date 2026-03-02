@@ -265,7 +265,7 @@ public struct Qwen3AsrModels: Sendable {
         let start = CFAbsoluteTimeGetCurrent()
         let model = try await MLModel.load(contentsOf: modelURL, configuration: configuration)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
-        logger.debug("  \(name): loaded in \(String(format: "%.2f", elapsed))s")
+        logger.info("  \(name): loaded in \(String(format: "%.2f", elapsed))s")
         return model
     }
 
