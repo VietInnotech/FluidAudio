@@ -180,6 +180,23 @@ extension VadSegmentationConfig {
         minSilenceAtMaxSpeech: 0.098,
         useMaxPossibleSilenceAtMaxSpeech: true
     )
+
+    /// Segmentation defaults tuned for Qwen3-ASR.
+    ///
+    /// Qwen3's KV-cache is limited to 512 tokens. At ~13 audio tokens per second,
+    /// the practical prompt limit is ~25s of audio (accounting for system/chat tokens).
+    /// We use 25s max speech duration to stay safely within that budget.
+    public static let qwen3Optimized = VadSegmentationConfig(
+        minSpeechDuration: 0.25,
+        minSilenceDuration: 0.5,
+        maxSpeechDuration: 25.0,
+        speechPadding: 0.15,
+        silenceThresholdForSplit: 0.3,
+        negativeThreshold: nil,
+        negativeThresholdOffset: 0.15,
+        minSilenceAtMaxSpeech: 0.098,
+        useMaxPossibleSilenceAtMaxSpeech: true
+    )
 }
 
 public struct VadAsrResult: Sendable {

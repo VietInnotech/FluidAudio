@@ -24,6 +24,55 @@ private struct Qwen3Backend {
     func transcribe(audioSamples: [Float], language: String?) async throws -> String {
         try await manager.transcribe(audioSamples: audioSamples, language: language, maxNewTokens: 512)
     }
+
+    /// Transcribe long audio by VAD-segmenting into chunks that fit the Qwen3 context window,
+    /// then concatenating results. Follows the same pattern as Qwen3-ASR-Toolkit and antirez/qwen-asr.
+    func transcribeWithVad(
+        audioSamples: [Float],
+        vadManager: VadManager,
+        language: String?
+    ) async throws -> String {
+        let segments = try await vadManager.segmentSpeech(
+            audioSamples,
+            config: .qwen3Optimized
+        )
+
+        guard !segments.isEmpty else {
+            return ""
+        }
+
+        let sampleRate = 16_000
+        var transcribedParts: [String] = []
+
+        for (idx, segment) in segments.enumerated() {
+            let startSample = max(0, Int(segment.startTime * Double(sampleRate)))
+            let endSample = min(audioSamples.count, Int(segment.endTime * Double(sampleRate)))
+
+            guard endSample > startSample else { continue }
+
+            let segmentSamples = Array(audioSamples[startSample..<endSample])
+            // Skip segments shorter than 0.5s — too short for meaningful transcription
+            guard segmentSamples.count >= sampleRate / 2 else { continue }
+
+            let segDuration = Double(segmentSamples.count) / Double(sampleRate)
+            serviceLogger.debug(
+                "qwen3 chunk \(idx + 1)/\(segments.count): \(String(format: "%.1f", segment.startTime))-\(String(format: "%.1f", segment.endTime))s (\(String(format: "%.1f", segDuration))s)"
+            )
+
+            let text = try await manager.transcribe(
+                audioSamples: segmentSamples,
+                language: language,
+                maxNewTokens: 512
+            )
+
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                transcribedParts.append(trimmed)
+            }
+        }
+
+        return transcribedParts.joined(separator: " ")
+    }
 }
 
 /// Thread-safe transcription service that allows one active transcription at a time.
@@ -42,6 +91,7 @@ actor TranscriptionService {
     private var parakeetVadManager: VadManager?
     // Stored as Any to avoid propagating @available requirement on the actor
     private var qwen3Backend: Any?
+    private var qwen3VadManager: VadManager?
     private var ctcManager: CtcAsrManager?
 
     // Busy flag for single-concurrency enforcement
@@ -109,7 +159,16 @@ actor TranscriptionService {
             guard let backend = qwen3Backend as? Qwen3Backend else {
                 throw ServerError.internalError("Qwen3 backend not initialized")
             }
-            text = try await backend.transcribe(audioSamples: audioSamples, language: language)
+            guard let vadManager = qwen3VadManager else {
+                throw ServerError.internalError("Qwen3 VAD manager not initialized")
+            }
+            // Use VAD-chunked transcription to handle audio of any length.
+            // Qwen3's KV-cache is limited to 512 tokens (~25s audio).
+            text = try await backend.transcribeWithVad(
+                audioSamples: audioSamples,
+                vadManager: vadManager,
+                language: language
+            )
 
         case .ctc:
             guard let manager = ctcManager else {
@@ -176,6 +235,8 @@ actor TranscriptionService {
             serviceLogger.info("initializing qwen3-asr f32…")
             try await backend.loadModels(from: cacheDir)
             qwen3Backend = backend
+            serviceLogger.info("loading VAD for qwen3 chunking…")
+            qwen3VadManager = try await VadManager(config: .default)
 
         case .qwen3Int8:
             guard #available(macOS 15, *) else {
@@ -188,6 +249,8 @@ actor TranscriptionService {
             serviceLogger.info("initializing qwen3-asr int8…")
             try await backend.loadModels(from: cacheDir)
             qwen3Backend = backend
+            serviceLogger.info("loading VAD for qwen3 chunking…")
+            qwen3VadManager = try await VadManager(config: .default)
 
         case .ctcVi:
             serviceLogger.info("downloading CTC Vietnamese models…")
@@ -208,6 +271,7 @@ actor TranscriptionService {
         }
         parakeetVadManager = nil
         qwen3Backend = nil
+        qwen3VadManager = nil
         ctcManager = nil
         currentModel = nil
     }
