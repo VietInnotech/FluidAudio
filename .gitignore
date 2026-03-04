@@ -135,6 +135,10 @@ Models/**/*.mlmodelc/
 Models/**/*.mlpackage/
 Models/**/weights/
 
+# Build artifacts and temporary test scripts
+build/
+Tools/test_*.py
+
 # Benchmark and test results (local only)
 benchmark-results/
 *_benchmark_results.json
