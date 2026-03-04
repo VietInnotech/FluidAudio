@@ -138,6 +138,7 @@ Models/**/weights/
 # Build artifacts and temporary test scripts
 build/
 Tools/test_*.py
+Tools/quick_*.py
 
 # Benchmark and test results (local only)
 benchmark-results/
