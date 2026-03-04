@@ -353,6 +353,57 @@ public final class EmbeddingWeights: Sendable {
         self.data = fileData
     }
 
+    /// Load embedding weights from a binary file with explicit expected dimensions.
+    ///
+    /// Use this initializer when loading embeddings for models other than Qwen3-ASR
+    /// (e.g., VibeVoice-ASR which has a different vocab size and hidden size).
+    ///
+    /// - Parameters:
+    ///   - url: Path to the binary embeddings file.
+    ///   - expectedVocabSize: Expected vocabulary size for validation.
+    ///   - expectedHiddenSize: Expected hidden size for validation.
+    public static func load(
+        from url: URL,
+        expectedVocabSize: Int? = nil,
+        expectedHiddenSize: Int? = nil
+    ) throws -> EmbeddingWeights {
+        let fileData = try Data(contentsOf: url)
+        guard fileData.count >= 8 else {
+            throw VibeVoiceAsrError.modelLoadFailed("Embedding file too small")
+        }
+
+        let vocabVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) })
+        let hiddenVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) })
+
+        if let expected = expectedVocabSize, vocabVal != expected {
+            throw VibeVoiceAsrError.modelLoadFailed(
+                "Embedding vocab size \(vocabVal) != expected \(expected)"
+            )
+        }
+        if let expected = expectedHiddenSize, hiddenVal != expected {
+            throw VibeVoiceAsrError.modelLoadFailed(
+                "Embedding hidden size \(hiddenVal) != expected \(expected)"
+            )
+        }
+
+        let expectedSize = 8 + vocabVal * hiddenVal * 2
+        guard fileData.count == expectedSize else {
+            throw VibeVoiceAsrError.modelLoadFailed(
+                "Embedding file size mismatch: expected \(expectedSize), got \(fileData.count)"
+            )
+        }
+
+        let weights = EmbeddingWeights(vocabSize: vocabVal, hiddenSize: hiddenVal, data: fileData)
+        return weights
+    }
+
+    /// Internal initializer for pre-validated data.
+    private init(vocabSize: Int, hiddenSize: Int, data: Data) {
+        self.vocabSize = vocabSize
+        self.hiddenSize = hiddenSize
+        self.data = data
+    }
+
     /// Get embedding vector for a token ID.
     /// Returns float32 array of length hiddenSize.
     public func embedding(for tokenId: Int) -> [Float] {

@@ -38,12 +38,14 @@ Based on FluidInference/mobius conversion scripts.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import shutil
 import struct
 import sys
 import time
+import types
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -64,9 +66,112 @@ DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-1.7B"
 # Shared constants
 SAMPLE_RATE = 16000
 NUM_MEL_BINS = 128
-MEL_WINDOW_SIZE = 100  # n_window * 2
+MEL_WINDOW_SIZE = 800  # n_window_infer: 8-second attention window (paper: n_window_infer=800)
 CONV_DOWNSAMPLE_FACTOR = 8
 MAX_AUDIO_SECONDS = 30.0
+
+
+def _load_qwen3_asr_modules():
+    """Load Qwen3-ASR configuration and modeling modules from cloned repo.
+
+    This bypasses qwen_asr/__init__.py which imports heavy inference
+    dependencies (nagisa, soynlp, qwen-omni-utils) unneeded for CoreML conversion.
+    Clone the repo: git clone https://github.com/QwenLM/Qwen3-ASR.git <offasr/qwen3-asr>
+    """
+    qwen_asr_path = Path(__file__).resolve().parents[2] / "qwen3-asr"
+    if not qwen_asr_path.exists():
+        raise FileNotFoundError(
+            f"qwen3-asr source not found at {qwen_asr_path}\n"
+            "Clone it: git clone https://github.com/QwenLM/Qwen3-ASR.git "
+            f"{qwen_asr_path}"
+        )
+
+    tb_dir = qwen_asr_path / "qwen_asr" / "core" / "transformers_backend"
+
+    # Create stub package entries so relative imports within the modules work
+    for pkg_name, pkg_path in [
+        ("qwen_asr", qwen_asr_path / "qwen_asr"),
+        ("qwen_asr.core", qwen_asr_path / "qwen_asr" / "core"),
+        ("qwen_asr.core.transformers_backend", tb_dir),
+    ]:
+        if pkg_name not in sys.modules:
+            mod = types.ModuleType(pkg_name)
+            mod.__path__ = [str(pkg_path)]
+            mod.__package__ = pkg_name
+            sys.modules[pkg_name] = mod
+
+    # Load configuration module first (no internal deps)
+    config_fqn = "qwen_asr.core.transformers_backend.configuration_qwen3_asr"
+    spec = importlib.util.spec_from_file_location(config_fqn, tb_dir / "configuration_qwen3_asr.py")
+    config_mod = importlib.util.module_from_spec(spec)
+    sys.modules[config_fqn] = config_mod
+    spec.loader.exec_module(config_mod)
+
+    # Load modeling module (has relative import from .configuration_qwen3_asr)
+    # Patch transformers 4.x to provide symbols only in 5.x that modeling_qwen3_asr.py needs
+    import transformers.utils.generic as _tug
+    if not hasattr(_tug, "TransformersKwargs"):
+        from typing import TypedDict
+        _tug.TransformersKwargs = TypedDict("TransformersKwargs", {})  # empty TypedDict is enough
+    if not hasattr(_tug, "check_model_inputs"):
+        def _check_model_inputs_stub():
+            def decorator(fn):
+                return fn
+            return decorator
+        _tug.check_model_inputs = _check_model_inputs_stub
+
+    model_fqn = "qwen_asr.core.transformers_backend.modeling_qwen3_asr"
+    spec2 = importlib.util.spec_from_file_location(model_fqn, tb_dir / "modeling_qwen3_asr.py")
+    model_mod = importlib.util.module_from_spec(spec2)
+    sys.modules[model_fqn] = model_mod
+    spec2.loader.exec_module(model_mod)
+
+    return config_mod, model_mod
+
+
+def load_audio_encoder_only(model_id: str) -> nn.Module:
+    """Load only the audio encoder using the actual Qwen3ASRAudioEncoder class.
+
+    Much more memory-efficient than loading the full 1.4B+ model — only loads
+    the audio encoder weights (~85MB) instead of the entire model.
+    Returns the actual Qwen3ASRAudioEncoder instance with real weights.
+    """
+    config_mod, model_mod = _load_qwen3_asr_modules()
+    print("  Loaded Qwen3-ASR source modules")
+
+    # Load config.json and build audio encoder config
+    from huggingface_hub import hf_hub_download
+    config_path = hf_hub_download(model_id, "config.json")
+    with open(config_path) as f:
+        full_config = json.load(f)
+
+    audio_cfg_dict = full_config["thinker_config"]["audio_config"]
+    audio_config = config_mod.Qwen3ASRAudioEncoderConfig(**audio_cfg_dict)
+    # Force eager attention so torch.jit.trace works (no flash/SDPA control flow)
+    audio_config._attn_implementation = "eager"
+
+    # Instantiate the actual encoder class
+    audio_encoder = model_mod.Qwen3ASRAudioEncoder(audio_config)
+    audio_encoder.eval()
+
+    # Load weights from safetensors
+    print("  Loading audio encoder weights...")
+    all_weights = load_all_weights(model_id)
+    prefix = "thinker.audio_tower."
+    encoder_weights = {
+        k[len(prefix):]: v.float()
+        for k, v in all_weights.items()
+        if k.startswith(prefix)
+    }
+    missing, unexpected = audio_encoder.load_state_dict(encoder_weights, strict=False)
+    # positional_embedding.pe is a registered buffer computed at init — not in safetensors
+    missing = [k for k in missing if "positional_embedding.pe" not in k]
+    if missing:
+        raise RuntimeError(f"Missing audio encoder weights: {missing[:5]}")
+    if unexpected:
+        print(f"  Unexpected encoder keys (OK): {unexpected[:3]}")
+    print(f"  Loaded {len(encoder_weights)} encoder weight tensors")
+    return audio_encoder
 
 
 def load_model_config(model_id: str) -> dict:
@@ -81,10 +186,14 @@ def load_model_config(model_id: str) -> dict:
 
 def get_arch_constants(config: dict) -> dict:
     """Extract architecture constants from config.json."""
-    # Audio encoder config
-    audio_cfg = config.get("audio_config", config.get("audio_encoder", {}))
-    # Text decoder config
-    text_cfg = config.get("text_config", config.get("thinker_config", {}))
+    # Handle nested thinker_config (Qwen3-ASR format) or flat format
+    if "thinker_config" in config:
+        thinker = config["thinker_config"]
+        audio_cfg = thinker.get("audio_config", thinker.get("audio_encoder", {}))
+        text_cfg = thinker.get("text_config", thinker.get("thinker_config", {}))
+    else:
+        audio_cfg = config.get("audio_config", config.get("audio_encoder", {}))
+        text_cfg = config.get("text_config", config.get("thinker_config", {}))
 
     return {
         # Audio encoder
@@ -350,15 +459,131 @@ class AudioEncoderWrapper(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Sinusoidal Positional Embedding
+# ---------------------------------------------------------------------------
+
+class SinusoidalPositionalEmbedding(nn.Module):
+    """Sinusoidal positional embedding matching Qwen3-ASR audio encoder."""
+
+    def __init__(self, d_model: int, max_len: int = 4096) -> None:
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe)
+
+    def forward(self, t: int) -> torch.Tensor:
+        return self.pe[:t]
+
+
+# ---------------------------------------------------------------------------
+# Build Audio Encoder from Weights
+# ---------------------------------------------------------------------------
+
+def build_audio_encoder_from_weights(weights: dict, arch: dict) -> nn.Module:
+    """Construct the audio encoder nn.Module from raw safetensors weights.
+
+    This bypasses AutoModel/AutoConfig (which requires transformers to register
+    the qwen3_asr model type) and directly builds the encoder from weights.
+    """
+    d_model = arch["encoder_d_model"]
+    num_layers = arch["encoder_num_layers"]
+    num_heads = arch["encoder_num_heads"]
+    output_dim = arch["encoder_output_dim"]
+    head_dim = d_model // num_heads
+
+    # Detect actual conv channels and FFN dim from weights
+    conv_channels = weights["thinker.audio_tower.conv2d1.weight"].shape[0]
+    freq_after_conv = weights["thinker.audio_tower.conv_out.weight"].shape[1] // conv_channels
+    conv_out_in = conv_channels * freq_after_conv
+    ffn_dim = weights["thinker.audio_tower.layers.0.fc1.weight"].shape[0]
+
+    class SelfAttn(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.q_proj = nn.Linear(d_model, d_model)
+            self.k_proj = nn.Linear(d_model, d_model)
+            self.v_proj = nn.Linear(d_model, d_model)
+            self.out_proj = nn.Linear(d_model, d_model)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            t = x.shape[0]
+            scale = head_dim ** -0.5
+            q = self.q_proj(x).view(t, num_heads, head_dim).transpose(0, 1)  # [H, T, D]
+            k = self.k_proj(x).view(t, num_heads, head_dim).transpose(0, 1)
+            v = self.v_proj(x).view(t, num_heads, head_dim).transpose(0, 1)
+            attn = torch.softmax(torch.matmul(q, k.transpose(-2, -1)) * scale, dim=-1)
+            out = torch.matmul(attn, v).transpose(0, 1).contiguous().view(t, d_model)
+            return self.out_proj(out)
+
+    class EncoderLayer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.self_attn_layer_norm = nn.LayerNorm(d_model)
+            self.self_attn = SelfAttn()
+            self.final_layer_norm = nn.LayerNorm(d_model)
+            self.fc1 = nn.Linear(d_model, ffn_dim)
+            self.fc2 = nn.Linear(ffn_dim, d_model)
+
+        def forward(self, x: torch.Tensor, cu_seqlens=None) -> tuple:
+            # Pre-norm attention
+            residual = x
+            x = self.self_attn_layer_norm(x)
+            x = self.self_attn(x)
+            x = residual + x
+            # Pre-norm FFN (GELU)
+            residual = x
+            x = self.final_layer_norm(x)
+            x = F.gelu(self.fc1(x))
+            x = self.fc2(x)
+            x = residual + x
+            return (x,)
+
+    class AudioEncoderStub(nn.Module):
+        pass
+
+    stub = AudioEncoderStub()
+    stub.conv2d1 = nn.Conv2d(1, conv_channels, kernel_size=3, stride=2, padding=1)
+    stub.conv2d2 = nn.Conv2d(conv_channels, conv_channels, kernel_size=3, stride=2, padding=1)
+    stub.conv2d3 = nn.Conv2d(conv_channels, conv_channels, kernel_size=3, stride=2, padding=1)
+    stub.conv_out = nn.Linear(conv_out_in, d_model, bias=False)
+    stub.positional_embedding = SinusoidalPositionalEmbedding(d_model)
+    stub.ln_post = nn.LayerNorm(d_model)
+    stub.proj1 = nn.Linear(d_model, d_model)
+    stub.proj2 = nn.Linear(d_model, output_dim)
+    stub.layers = nn.ModuleList([EncoderLayer() for _ in range(num_layers)])
+
+    # Load weights by remapping key prefix
+    prefix = "thinker.audio_tower."
+    encoder_weights = {k[len(prefix):]: v.float() for k, v in weights.items() if k.startswith(prefix)}
+    missing, unexpected = stub.load_state_dict(encoder_weights, strict=False)
+    # positional_embedding.pe is a computed buffer — not in safetensors (expected)
+    missing = [k for k in missing if k != "positional_embedding.pe"]
+    if missing:
+        raise RuntimeError(f"Missing encoder weights: {missing[:5]}")
+    if unexpected:
+        print(f"  Unexpected encoder keys: {unexpected[:5]}")
+
+    stub.eval()
+    return stub
+
+
+# ---------------------------------------------------------------------------
 # Model Loading
 # ---------------------------------------------------------------------------
 
 def load_full_model(model_id: str):
-    """Load the full Qwen3-ASR model via trust_remote_code=True."""
-    from transformers import AutoModel, AutoConfig
+    """Load the full Qwen3-ASR model using the cloned source for custom class registration."""
+    config_mod, model_mod = _load_qwen3_asr_modules()
+    print("  Loaded Qwen3-ASR source modules (bypassed heavy deps)")
+
+    from transformers import AutoConfig, AutoModel
     from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 
-    # Patch ROPE_INIT_FUNCTIONS for transformers 5.x compatibility
+    # Patch ROPE_INIT_FUNCTIONS for transformers 5.x compatibility.
+    # Qwen3-ASR uses rope_type='default' which was removed in transformers 5.0.
     if "default" not in ROPE_INIT_FUNCTIONS:
         def _default_rope_init(config, device=None, **kwargs):
             base = config.rope_theta
@@ -370,12 +595,18 @@ def load_full_model(model_id: str):
         ROPE_INIT_FUNCTIONS["default"] = _default_rope_init
         print("  Patched ROPE_INIT_FUNCTIONS: added 'default' rope type")
 
-    print(f"Loading model: {model_id} (trust_remote_code=True)")
+    # Register custom classes so AutoConfig/AutoModel can find them
+    AutoConfig.register("qwen3_asr", config_mod.Qwen3ASRConfig)
+    AutoConfig.register("qwen3_asr_audio_encoder", config_mod.Qwen3ASRAudioEncoderConfig)
+    AutoModel.register(config_mod.Qwen3ASRConfig, model_mod.Qwen3ASRForConditionalGeneration)
+    print("  Registered Qwen3ASR custom classes with AutoConfig/AutoModel")
+
+    print(f"Loading model: {model_id}")
     t0 = time.time()
 
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
 
-    # Patch missing attributes
+    # Patch missing attributes for transformers 5.x compatibility
     def _ensure_attr(cfg, attr, default):
         if not hasattr(cfg, attr):
             setattr(cfg, attr, default)
@@ -617,7 +848,8 @@ def convert_audio_encoder(
     elif hasattr(model, "audio_tower"):
         audio_encoder = model.audio_tower
     else:
-        raise AttributeError("Cannot find audio_tower in model")
+        # Passed directly as the encoder stub
+        audio_encoder = model
 
     audio_encoder.eval()
     wrapper = AudioEncoderWrapper(audio_encoder)
@@ -870,13 +1102,15 @@ def main():
 
     component_paths = {}
 
-    # Audio encoder needs the full model loaded via trust_remote_code
+    # Audio encoder — load using actual Qwen3ASRAudioEncoder from cloned source
     if "encoder" in convert_list:
-        full_model = load_full_model(model_id)
-        path = convert_audio_encoder(full_model, arch, output_dir)
+        print("\nLoading audio encoder...")
+        t0 = time.time()
+        audio_encoder = load_audio_encoder_only(model_id)
+        print(f"  Audio encoder loaded in {time.time() - t0:.1f}s")
+        path = convert_audio_encoder(audio_encoder, arch, output_dir)
         component_paths["audio_encoder"] = {"path": path.name}
-        del full_model
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        del audio_encoder
         import gc; gc.collect()
 
     # Decoder uses transformers Qwen3Model directly (no custom code needed)

@@ -362,6 +362,11 @@ struct WhisperDecoder {
 
     /// Copy KV cache slices into the full cache tensor at the given position.
     /// Uses direct memory access for performance.
+    ///
+    /// Note: `withUnsafeMutableBytes` strides are in **bytes**, while
+    /// `MLMultiArray.strides` are in **elements**. Source offsets use element
+    /// strides (multiplied by bytesPerSample), destination offsets use byte
+    /// strides directly.
     static func updateKVCache(
         keyTensor: MLMultiArray,
         keySlice: MLMultiArray,
@@ -380,14 +385,16 @@ struct WhisperDecoder {
                     valueSlice.withUnsafeBytes { valueSlicePointer in
                         DispatchQueue.concurrentPerform(iterations: tensorShape[1]) { j in
                             for k in 0..<sliceShape[3] {
-                                let keyDestIndex = j * keyTargetStrides[1] + (index + k) * keyTargetStrides[3]
-                                let keyDest = keyTensorPointer.baseAddress! + keyDestIndex * bytesPerSample
+                                // Dest strides from withUnsafeMutableBytes are already in bytes
+                                let keyDestOffset = j * keyTargetStrides[1] + (index + k) * keyTargetStrides[3]
+                                let keyDest = keyTensorPointer.baseAddress! + keyDestOffset
+                                // Source strides from .strides are in elements — multiply by bytesPerSample
                                 let keySliceIndex = j * sliceStrides[1] + k * sliceStrides[3]
                                 let keySrc = keySlicePointer.baseAddress! + keySliceIndex * bytesPerSample
                                 memcpy(keyDest, keySrc, bytesPerSample)
 
-                                let valDestIndex = j * valueTargetStrides[1] + (index + k) * valueTargetStrides[3]
-                                let valDest = valueTensorPointer.baseAddress! + valDestIndex * bytesPerSample
+                                let valDestOffset = j * valueTargetStrides[1] + (index + k) * valueTargetStrides[3]
+                                let valDest = valueTensorPointer.baseAddress! + valDestOffset
                                 let valSliceIndex = j * sliceStrides[1] + k * sliceStrides[3]
                                 let valSrc = valueSlicePointer.baseAddress! + valSliceIndex * bytesPerSample
                                 memcpy(valDest, valSrc, bytesPerSample)

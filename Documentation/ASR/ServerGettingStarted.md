@@ -154,6 +154,23 @@ Response:
 {"text": "the quick brown fox jumps over the lazy dog"}
 ```
 
+## Real-Time Streaming
+
+For real-time audio streaming with VAD-driven endpointing, use the **WebSocket streaming endpoint** instead:
+
+```bash
+# Connect with WebSocket
+wscat -c "ws://localhost:8080/v1/audio/stream?model=parakeet-tdt-v3&interim_results=true"
+
+# Send binary PCM audio frames...
+```
+
+See [WebSocket Streaming — Getting Started](./StreamingGettingStarted.md) for:
+- Protocol documentation (Deepgram-compatible)
+- Python & JavaScript examples
+- Endpointing and interim results tuning
+- Performance benchmarks
+
 ## Configuration
 
 ### Environment Variables

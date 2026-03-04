@@ -18,6 +18,8 @@ public enum Repo: String, CaseIterable {
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case qwen3Asr17b = "FluidInference/qwen3-asr-1.7b-coreml/f32"
     case whisperLargeV3Turbo = "argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
+    case vibevoiceAsr = "FluidInference/vibevoice-asr-coreml/f32"
+    case vibevoiceAsrInt4 = "FluidInference/vibevoice-asr-coreml/int4"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -54,6 +56,10 @@ public enum Repo: String, CaseIterable {
             return "qwen3-asr-1.7b-coreml/f32"
         case .whisperLargeV3Turbo:
             return "whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
+        case .vibevoiceAsr:
+            return "vibevoice-asr-coreml/f32"
+        case .vibevoiceAsrInt4:
+            return "vibevoice-asr-coreml/int4"
         }
     }
 
@@ -76,6 +82,8 @@ public enum Repo: String, CaseIterable {
             return "FluidInference/qwen3-asr-1.7b-coreml"
         case .whisperLargeV3Turbo:
             return "argmaxinc/whisperkit-coreml"
+        case .vibevoiceAsr, .vibevoiceAsrInt4:
+            return "FluidInference/vibevoice-asr-coreml"
         default:
             return "FluidInference/\(name)"
         }
@@ -96,6 +104,10 @@ public enum Repo: String, CaseIterable {
             return "f32"
         case .whisperLargeV3Turbo:
             return "openai_whisper-large-v3-v20240930_turbo"
+        case .vibevoiceAsr:
+            return "f32"
+        case .vibevoiceAsrInt4:
+            return "int4"
         default:
             return nil
         }
@@ -327,6 +339,21 @@ public enum ModelNames {
         ]
     }
 
+    /// VibeVoice-ASR model names (Microsoft VibeVoice-ASR 7B unified ASR+diarization)
+    public enum VibeVoice {
+        public static let acousticEncoderFile = "vibevoice_acoustic_encoder.mlmodelc"
+        public static let semanticEncoderFile = "vibevoice_semantic_encoder.mlmodelc"
+        public static let decoderStatefulFile = "vibevoice_decoder_stateful.mlmodelc"
+        public static let embeddingsFile = "vibevoice_embeddings.bin"
+
+        public static let requiredModels: Set<String> = [
+            acousticEncoderFile,
+            semanticEncoderFile,
+            decoderStatefulFile,
+            embeddingsFile,
+        ]
+    }
+
     /// Whisper model names (OpenAI Whisper Large v3 Turbo via WhisperKit CoreML)
     public enum Whisper {
         public static let melSpectrogram = "MelSpectrogram"
@@ -451,6 +478,8 @@ public enum ModelNames {
             return ModelNames.Qwen3ASR.requiredModelsFull
         case .whisperLargeV3Turbo:
             return ModelNames.Whisper.requiredModels
+        case .vibevoiceAsr, .vibevoiceAsrInt4:
+            return ModelNames.VibeVoice.requiredModels
         }
     }
 }

@@ -1,5 +1,16 @@
 # Automatic Speech Recognition (ASR) / Transcription
 
+## Available ASR Models
+
+| Model | Type | Languages | Features | Best For |
+|---|---|---|---|---|
+| **Parakeet TDT v3** | Batch | 25 European | Real-time (~120x RTF) | General multilingual accuracy |
+| **Parakeet TDT v2** | Batch | English only | Fast & accurate | English transcription |
+| **Parakeet EOU** | Streaming | Multilingual | End-of-utterance detection | Real-time streaming |
+| **VibeVoice-ASR** | Batch | 50+ | **Diarization, timestamps** | Meetings, interviews, multi-speaker |
+
+See [VibeVoice.md](VibeVoice.md) for speaker diarization and timestamped output.
+
 ## Batch Transcription
 
 - Model (multilingual): `FluidInference/parakeet-tdt-0.6b-v3-coreml`

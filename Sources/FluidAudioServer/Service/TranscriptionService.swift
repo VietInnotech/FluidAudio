@@ -308,6 +308,20 @@ actor TranscriptionService {
             serviceLogger.info("loading VAD for qwen3 chunking…")
             qwen3VadManager = try await VadManager(config: .default)
 
+        case .qwen3Large:
+            guard #available(macOS 15, *) else {
+                throw ServerError.internalError("Qwen3 models require macOS 15 or later")
+            }
+            serviceLogger.info("downloading qwen3-asr 1.7b models…")
+            let backend = Qwen3Backend()
+            _ = try await Qwen3AsrModels.download(variant: .large)
+            let cacheDir = Qwen3AsrModels.defaultCacheDirectory(variant: .large)
+            serviceLogger.info("initializing qwen3-asr 1.7b…")
+            try await backend.loadModels(from: cacheDir)
+            qwen3Backend = backend
+            serviceLogger.info("loading VAD for qwen3 chunking…")
+            qwen3VadManager = try await VadManager(config: .default)
+
         case .ctcVi:
             serviceLogger.info("downloading CTC Vietnamese models…")
             let manager = CtcAsrManager()

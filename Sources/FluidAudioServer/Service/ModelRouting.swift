@@ -6,6 +6,7 @@ enum ModelID: String, CaseIterable, Sendable {
     case parakeetV3 = "fluidaudio-parakeet-v3"
     case qwen3F32 = "fluidaudio-qwen3-f32"
     case qwen3Int8 = "fluidaudio-qwen3-int8"
+    case qwen3Large = "fluidaudio-qwen3-1.7b"
     case ctcVi = "fluidaudio-ctc-vi"
     case whisper = "fluidaudio-whisper"
 
@@ -16,6 +17,7 @@ enum ModelID: String, CaseIterable, Sendable {
         case .parakeetV3: return "Parakeet TDT v3 (0.6B)"
         case .qwen3F32: return "Qwen3-ASR (0.6B, FP16)"
         case .qwen3Int8: return "Qwen3-ASR (0.6B, Int8)"
+        case .qwen3Large: return "Qwen3-ASR (1.7B, FP16)"
         case .ctcVi: return "Parakeet CTC Vietnamese (0.6B)"
         case .whisper: return "Whisper Large v3 Turbo"
         }
@@ -25,7 +27,7 @@ enum ModelID: String, CaseIterable, Sendable {
     var backend: ModelBackend {
         switch self {
         case .parakeetV2, .parakeetV3: return .parakeet
-        case .qwen3F32, .qwen3Int8: return .qwen3
+        case .qwen3F32, .qwen3Int8, .qwen3Large: return .qwen3
         case .ctcVi: return .ctc
         case .whisper: return .whisper
         }
@@ -34,7 +36,7 @@ enum ModelID: String, CaseIterable, Sendable {
     /// Whether this model accepts a language parameter.
     var supportsLanguage: Bool {
         switch self {
-        case .qwen3F32, .qwen3Int8: return true
+        case .qwen3F32, .qwen3Int8, .qwen3Large: return true
         case .whisper: return true
         default: return false
         }

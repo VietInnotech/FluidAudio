@@ -13,14 +13,14 @@ public enum Qwen3AsrConfig {
     public static let sampleRate = 16000
     public static let numMelBins = 128
 
-    /// Audio encoder window size in mel frames (n_window * 2).
-    /// The encoder processes chunks of this size.
-    public static let melWindowSize = 100
+    /// Audio encoder window size in mel frames.
+    /// Uses n_window_infer=800 (8-second windows) matching the paper's inference specification.
+    public static let melWindowSize = 800
 
     /// Conv2D downsampling factor: 3 layers of stride-2 -> 8x reduction.
     public static let convDownsampleFactor = 8
 
-    /// Output frames per mel window: ceil(100/8) = 13.
+    /// Output frames per mel window: 800/8 = 100.
     public static let outputFramesPerWindow = (melWindowSize + convDownsampleFactor - 1) / convDownsampleFactor
 
     // MARK: Encoder

@@ -191,3 +191,73 @@ await manager.reset()
 **Performance:**
 - Real-time factor: ~5x RTF (160ms), ~12x RTF (320ms) on Apple Silicon
 - WER: ~8% (160ms), ~5% (320ms) on LibriSpeech test-clean
+## HTTP & WebSocket Server
+
+FluidAudio includes a self-hosted ASR server for local deployment on Apple Silicon Macs.
+
+### REST API: `/v1/audio/transcriptions` (POST)
+
+**OpenAI-compatible endpoint** for batch transcription requests.
+
+```swift
+curl -X POST http://localhost:8080/v1/audio/transcriptions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F "file=@audio.wav" \
+  -F "model=parakeet-tdt-v3" \
+  -F "language=en"
+```
+
+**Response:**
+```json
+{
+  "text": "The quick brown fox jumps over the lazy dog",
+  "language": "en"
+}
+```
+
+Parameters:
+- `file` — Audio file (WAV, M4A, MP3, FLAC)
+- `model` — Model ID (default: `parakeet-tdt-v3`)
+- `language` — Language code (default: auto-detect)
+
+See [ASR Server — Getting Started](./ASR/ServerGettingStarted.md) for setup and configuration.
+
+### WebSocket Streaming: `/v1/audio/stream` (GET upgrade)
+
+**Real-time streaming transcription** with VAD-driven endpointing and Deepgram-compatible protocol.
+
+**Connection:**
+```
+ws://localhost:8080/v1/audio/stream?model=parakeet-tdt-v3&language=en&interim_results=true&endpointing=700
+```
+
+**Audio Input:**
+Send binary PCM frames (16 kHz mono):
+- Format: `pcm_s16le` (default) or `pcm_f32le`
+- Any chunk size
+- No handshake required (send audio immediately after connect)
+
+**Server Messages:**
+- `Metadata` — Connection established
+- `SpeechStarted` — VAD detected speech onset  
+- `Results` — Streaming or final transcription (with `is_final`/`speech_final` flags)
+- `UtteranceEnd` — Utterance boundary after silence timeout
+- `Error` — Connection or processing error
+
+**Client Control Messages:**
+- `Finalize` — Force-flush current utterance
+- `KeepAlive` — Prevent timeout during pauses
+
+See [WebSocket Streaming — Getting Started](./ASR/StreamingGettingStarted.md) for protocol details, examples, and tuning.
+
+### OpenAPI Documentation
+
+Browse the interactive Swagger UI:
+```
+http://localhost:8080/swagger
+```
+
+Fetch the OpenAPI 3.1.0 spec:
+```bash
+curl http://localhost:8080/openapi.json | python3 -m json.tool
+```

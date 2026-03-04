@@ -41,7 +41,7 @@ public enum WhisperConfig {
         public static let transcribe = 50360
         public static let translate = 50359
         public static let noTimestamps = 50364
-        public static let timeTokenBegin = 50364
+        public static let timeTokenBegin = 50365
         public static let startOfPrevious = 50361
         public static let noSpeech = 50362
         public static let specialTokenBegin = 50257

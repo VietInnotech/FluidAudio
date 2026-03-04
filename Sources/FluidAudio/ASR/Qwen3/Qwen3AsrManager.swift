@@ -77,6 +77,75 @@ public actor Qwen3AsrManager {
             throw Qwen3AsrError.generationFailed("Models not loaded")
         }
 
+        // Check if mel spectrogram is too long (would exceed cache after encoding)
+        let numMelFrames = melSpectrogram.first?.count ?? 0
+        let estimatedAudioFeatures = (numMelFrames + Qwen3AsrConfig.melWindowSize - 1)
+            / Qwen3AsrConfig.melWindowSize * Qwen3AsrConfig.outputFramesPerWindow
+
+        if estimatedAudioFeatures > Qwen3AsrConfig.maxCacheSeqLen - 10 {
+            // Audio too long for single pass - split into chunks
+            return try await transcribeInChunks(
+                melSpectrogram: melSpectrogram,
+                language: language,
+                maxNewTokens: maxNewTokens
+            )
+        }
+
+        return try await transcribeSinglePass(
+            melSpectrogram: melSpectrogram,
+            language: language,
+            maxNewTokens: maxNewTokens
+        )
+    }
+
+    private func transcribeInChunks(
+        melSpectrogram: [[Float]],
+        language: String?,
+        maxNewTokens: Int
+    ) async throws -> String {
+        let numMelFrames = melSpectrogram.first?.count ?? 0
+        // Each 800-frame mel window produces 100 audio features
+        // Cache can hold ~500 features, so process ~4 windows at a time (3200 mel frames)
+        let maxMelFramesPerChunk = Qwen3AsrConfig.melWindowSize * 4
+
+        var allTranscriptions: [String] = []
+        var offset = 0
+
+        while offset < numMelFrames {
+            let end = min(offset + maxMelFramesPerChunk, numMelFrames)
+            let chunkSize = end - offset
+
+            // Extract chunk
+            var chunk: [[Float]] = melSpectrogram.map { bin in
+                Array(bin[offset..<end])
+            }
+
+            logger.info(
+                "Processing audio chunk: frames \(offset)-\(end) of \(numMelFrames) (\(String(format: "%.1f", Double(offset) / Double(numMelFrames) * 100))%)"
+            )
+
+            let chunkTranscription = try await transcribeSinglePass(
+                melSpectrogram: chunk,
+                language: language,
+                maxNewTokens: maxNewTokens
+            )
+            allTranscriptions.append(chunkTranscription)
+
+            offset = end
+        }
+
+        return allTranscriptions.joined(separator: " ")
+    }
+
+    private func transcribeSinglePass(
+        melSpectrogram: [[Float]],
+        language: String?,
+        maxNewTokens: Int
+    ) async throws -> String {
+        guard let models = models else {
+            throw Qwen3AsrError.generationFailed("Models not loaded")
+        }
+
         let start = CFAbsoluteTimeGetCurrent()
 
         // Resolve language
@@ -123,7 +192,7 @@ public actor Qwen3AsrManager {
 
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         logger.debug(
-            "Timing: audio=\(String(format: "%.2f", audioEncodeTime))s embed=\(String(format: "%.2f", embedTime))s gen=\(String(format: "%.2f", generateTime))s total=\(String(format: "%.2f", elapsed))s prompt=\(promptTokens.count) decoded=\(generatedTokenIds.count)"
+            "Timing: audio=\(String(format: "%.3f", audioEncodeTime))s embed=\(String(format: "%.3f", embedTime))s gen=\(String(format: "%.3f", generateTime))s total=\(String(format: "%.3f", elapsed))s prompt=\(promptTokens.count) audio_frames=\(numAudioFrames) decoded=\(generatedTokenIds.count)"
         )
 
         return text
@@ -137,9 +206,14 @@ public actor Qwen3AsrManager {
     ) throws -> [[Float]] {
         let windowSize = Qwen3AsrConfig.melWindowSize
         let numFrames = melSpectrogram.first?.count ?? 0
+        let totalWindows = (numFrames + windowSize - 1) / windowSize
 
         var allFeatures: [[Float]] = []
         var offset = 0
+        var windowIdx = 0
+        var firstWindowTime = 0.0
+        var totalEncoderCallTime = 0.0
+        let encodeLoopStart = CFAbsoluteTimeGetCurrent()
 
         while offset < numFrames {
             let end = min(offset + windowSize, numFrames)
@@ -152,7 +226,11 @@ public actor Qwen3AsrManager {
                 padTo: windowSize
             )
 
+            let callStart = CFAbsoluteTimeGetCurrent()
             let prediction = try models.audioEncoder.prediction(from: melInput)
+            let callTime = CFAbsoluteTimeGetCurrent() - callStart
+            totalEncoderCallTime += callTime
+            if windowIdx == 0 { firstWindowTime = callTime }
             guard let features = prediction.featureValue(for: "audio_features")?.multiArrayValue else {
                 throw Qwen3AsrError.encoderFailed("No audio_features output")
             }
@@ -176,8 +254,16 @@ public actor Qwen3AsrManager {
                 allFeatures.append(vec)
             }
 
+            windowIdx += 1
             offset += windowSize
         }
+
+        let totalLoopTime = CFAbsoluteTimeGetCurrent() - encodeLoopStart
+        let avgCallTime = totalWindows > 0 ? totalEncoderCallTime / Double(totalWindows) : 0
+        let overhead = totalLoopTime - totalEncoderCallTime
+        logger.debug(
+            "Encoder: \(totalWindows) windows, first=\(String(format: "%.3f", firstWindowTime))s avg=\(String(format: "%.3f", avgCallTime))s total_calls=\(String(format: "%.3f", totalEncoderCallTime))s overhead=\(String(format: "%.3f", overhead))s"
+        )
 
         return allFeatures
     }

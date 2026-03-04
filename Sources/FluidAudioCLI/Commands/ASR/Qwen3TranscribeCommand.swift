@@ -48,7 +48,7 @@ enum Qwen3TranscribeCommand {
                     if let parsed = Qwen3AsrVariant(rawValue: v) {
                         variant = parsed
                     } else {
-                        logger.error("Unknown variant '\(arguments[i + 1])'. Use 'f32' or 'int8'.")
+                        logger.error("Unknown variant '\(arguments[i + 1])'. Use 'f32', 'int8', or 'large'.")
                         exit(1)
                     }
                     i += 1
@@ -134,7 +134,8 @@ enum Qwen3TranscribeCommand {
             Options:
                 --help, -h              Show this help message
                 --model-dir <path>      Path to local model directory (skips download)
-                --variant <f32|int8>    Model variant (default: f32). int8 uses ~50% less RAM.
+                --variant <variant>     Model variant: f32 (0.6B, ~1.75GB), int8 (0.6B, ~900MB),
+                                        or large (1.7B, ~3.5GB). Default: f32.
                 --language, -l <code>   Language hint (e.g., zh, en, ja, ko, yue, ar, fr, de)
 
             Supported languages (30 total):

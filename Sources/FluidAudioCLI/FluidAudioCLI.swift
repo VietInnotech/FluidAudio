@@ -69,6 +69,8 @@ struct FluidAudioCLI {
             await WhisperTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "ctc-transcribe":
             await CtcTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "vibevoice-transcribe":
+            await VibeVoiceTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
             printUsage()
         default:
@@ -102,6 +104,7 @@ struct FluidAudioCLI {
                 ctc-transcribe          Transcribe audio using CTC greedy decoding (Vietnamese)
                 whisper-transcribe       Transcribe audio using Whisper Large v3 Turbo
                 whisper-benchmark       Run Whisper Large v3 Turbo benchmark on LibriSpeech
+                vibevoice-transcribe    Transcribe audio with VibeVoice-ASR (ASR+diarization)
                 download                Download evaluation datasets
                 help                    Show this help message
 
