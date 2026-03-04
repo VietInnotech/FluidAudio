@@ -69,6 +69,18 @@ enum DownloadCommand {
             }
         case "earnings22-kws":
             await DatasetDownloader.downloadEarnings22KWS(force: forceDownload)
+        case "whisper-models":
+            guard #available(macOS 14, iOS 17, *) else {
+                logger.error("Whisper requires macOS 14 or later")
+                exit(1)
+            }
+            do {
+                let dir = try await WhisperModels.download(force: forceDownload)
+                logger.info("Whisper models ready at: \(dir.path)")
+            } catch {
+                logger.error("Failed to download Whisper models: \(error)")
+                exit(1)
+            }
         case "all":
             await DatasetDownloader.downloadAMIDataset(variant: .sdm, force: forceDownload)
             await DatasetDownloader.downloadAMIDataset(variant: .ihm, force: forceDownload)
@@ -102,6 +114,7 @@ enum DownloadCommand {
                 librispeech-test-clean      LibriSpeech test-clean subset
                 librispeech-test-other      LibriSpeech test-other subset
                 earnings22-kws              Earnings22 keyword spotting dataset
+                whisper-models              Whisper Large v3 Turbo CoreML models
                 parakeet-models             Parakeet ASR models
                 all                         All diarization datasets
 

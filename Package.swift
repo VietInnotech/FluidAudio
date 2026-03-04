@@ -28,6 +28,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.20.1"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/vapor/multipart-kit.git", from: "4.0.0"),
     ],
     targets: [
@@ -84,6 +85,7 @@ let package = Package(
                 "FluidAudio",
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdRouter", package: "hummingbird"),
+                .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "MultipartKit", package: "multipart-kit"),
             ],
             path: "Sources/FluidAudioServer"

@@ -424,9 +424,8 @@ struct WhisperDecoder {
                 }
             }
 
-            // 2. Suppress blank at beginning
-            if suppressBlank && tokens.count == prefilledIndex {
-                // Suppress whitespace and EOT at very first decoded token
+            // 2. Suppress blank at the first decoded token (right after the full prompt)
+            if suppressBlank && tokens.count == initialPromptIndex {
                 base[WhisperConfig.Tokens.whitespace] = Float16(-Float.infinity)
                 base[WhisperConfig.Tokens.endOfText] = Float16(-Float.infinity)
             }
@@ -489,19 +488,20 @@ struct WhisperDecoder {
             }
         }
 
-        // If sum of timestamp probs > max text prob, force timestamp
+        // If log-sum-exp of timestamp logits > max text logit, force a timestamp.
+        // Matches WhisperKit/OpenAI Whisper: compare logsumexp(timestamps) vs max(text logits).
         var maxTextLogit: Float = -Float.infinity
         for i in 0..<eot {
             let v = Float(base[i])
             if v > maxTextLogit { maxTextLogit = v }
         }
 
-        var timestampLogitSum: Float = 0
+        // Numerically stable logsumexp: sum(exp(t_i - maxText)) > 1.0 iff logsumexp(t_i) > maxText
+        var timestampExpSum: Float = 0
         for i in timeBegin..<vocabSize {
-            timestampLogitSum += Float(base[i])
+            timestampExpSum += exp(Float(base[i]) - maxTextLogit)
         }
-
-        if timestampLogitSum > maxTextLogit {
+        if timestampExpSum > 1.0 {
             for i in 0..<eot {
                 base[i] = Float16(-Float.infinity)
             }

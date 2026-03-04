@@ -1,5 +1,5 @@
 {
-  "originHash" : "bf3f87f0bacbc765ab011ddd86f08fed097e88a3fa90949062b5770bd47f9a64",
+  "originHash" : "5c9268f9b8c0bef5b4f3f6e1d5ffcc00b947c2ba2061b45163f9e923dd1229ad",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -11,12 +11,30 @@
       }
     },
     {
+      "identity" : "compress-nio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/adam-fowler/compress-nio.git",
+      "state" : {
+        "revision" : "e1caa19077dda4b00441142ef57da3db02acd466",
+        "version" : "1.4.2"
+      }
+    },
+    {
       "identity" : "hummingbird",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/hummingbird-project/hummingbird.git",
       "state" : {
         "revision" : "328a211b3bdc8bdd41a40a3d4112ed6b79358fa4",
         "version" : "2.20.1"
+      }
+    },
+    {
+      "identity" : "hummingbird-websocket",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/hummingbird-project/hummingbird-websocket.git",
+      "state" : {
+        "revision" : "716c54294152c6d3301a6239a1d74db57cbcd6dc",
+        "version" : "2.6.0"
       }
     },
     {
@@ -242,6 +260,15 @@
       "state" : {
         "revision" : "f3d5cbfa653dd248ae8c92313453d5fdcfdf049e",
         "version" : "1.1.8"
+      }
+    },
+    {
+      "identity" : "swift-websocket",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/hummingbird-project/swift-websocket.git",
+      "state" : {
+        "revision" : "ca48d46c25f8fa948d37eaa480c73172182cf90f",
+        "version" : "1.5.0"
       }
     },
     {

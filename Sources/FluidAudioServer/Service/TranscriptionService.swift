@@ -93,6 +93,8 @@ actor TranscriptionService {
     private var qwen3Backend: Any?
     private var qwen3VadManager: VadManager?
     private var ctcManager: CtcAsrManager?
+    // WhisperManager is an actor (Sendable), stored directly.
+    private var whisperManager: WhisperManager?
 
     // Busy flag for single-concurrency enforcement
     private var isBusy = false
@@ -130,11 +132,59 @@ actor TranscriptionService {
         // Switch model if needed
         try await ensureModelLoaded(model)
 
+        return try await performTranscription(audioSamples: audioSamples, model: model, language: language)
+    }
+
+    // MARK: - Streaming API
+
+    /// Acquire the service for a streaming session. Sets the server as busy and loads the model.
+    ///
+    /// Call `releaseStreaming()` when the session ends to allow other requests.
+    func acquireForStreaming(model: ModelID) async throws {
+        guard !isBusy else {
+            serviceLogger.warning("streaming rejected: server busy")
+            throw ServerError.tooManyRequests("Server is currently processing another request. Try again later.")
+        }
+        isBusy = true
+        do {
+            try await ensureModelLoaded(model)
+        } catch {
+            isBusy = false
+            throw error
+        }
+        serviceLogger.info("streaming session acquired: \(model.rawValue)")
+    }
+
+    /// Release the service after a streaming session ends.
+    func releaseStreaming() {
+        isBusy = false
+        serviceLogger.info("streaming session released")
+    }
+
+    /// Transcribe audio samples during a streaming session (skips busy check).
+    ///
+    /// Must only be called between `acquireForStreaming()` and `releaseStreaming()`.
+    func transcribeForStream(
+        audioSamples: [Float],
+        model: ModelID,
+        language: String?
+    ) async throws -> TranscriptionResult {
+        return try await performTranscription(audioSamples: audioSamples, model: model, language: language)
+    }
+
+    // MARK: - Core Transcription
+
+    /// Core transcription logic without concurrency guards.
+    private func performTranscription(
+        audioSamples: [Float],
+        model: ModelID,
+        language: String?
+    ) async throws -> TranscriptionResult {
+        let durationSeconds = Double(audioSamples.count) / 16_000.0
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // Route transcription to the correct backend
         let text: String
-        let audioDuration = durationSeconds
 
         switch model.backend {
         case .parakeet:
@@ -176,6 +226,12 @@ actor TranscriptionService {
             }
             let result = try await manager.transcribe(audioSamples: audioSamples)
             text = result.text
+
+        case .whisper:
+            guard let manager = whisperManager else {
+                throw ServerError.internalError("Whisper manager not initialized")
+            }
+            text = try await manager.transcribe(audioSamples: audioSamples, language: language)
         }
 
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
@@ -183,7 +239,7 @@ actor TranscriptionService {
         return TranscriptionResult(
             text: text,
             model: model.rawValue,
-            duration: audioDuration,
+            duration: durationSeconds,
             processingTime: processingTime
         )
     }
@@ -257,6 +313,14 @@ actor TranscriptionService {
             let manager = CtcAsrManager()
             try await manager.loadModels(variant: .ctcVietnamese)
             ctcManager = manager
+
+        case .whisper:
+            serviceLogger.info("downloading Whisper Large v3 Turbo models…")
+            let cacheDir = try await WhisperModels.download()
+            serviceLogger.info("initializing Whisper…")
+            let manager = WhisperManager()
+            try await manager.loadModels(from: cacheDir)
+            whisperManager = manager
         }
 
         let loadTime = CFAbsoluteTimeGetCurrent() - loadStart
@@ -273,6 +337,7 @@ actor TranscriptionService {
         qwen3Backend = nil
         qwen3VadManager = nil
         ctcManager = nil
+        whisperManager = nil
         currentModel = nil
     }
 }

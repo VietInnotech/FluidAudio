@@ -1,0 +1,259 @@
+openapi: 3.1.0
+info:
+  title: FluidAudio ASR Server API
+  description: |
+    Local speech-to-text server with speaker diarization support.
+
+    ## REST API
+    OpenAI-compatible `/v1/audio/transcriptions` endpoint for batch transcription.
+
+    ## WebSocket Streaming API
+    Real-time streaming transcription via WebSocket at `ws://host:port/v1/audio/stream`.
+
+    ### Authentication
+    - `Authorization: Bearer <api-key>` header during WebSocket upgrade
+    - `?token=<api-key>` query parameter: `ws://host:port/v1/audio/stream?token=YOUR_KEY`
+
+    ### Protocol
+    **Client → Server (text):** Start session
+    ```json
+    {"type":"session.start","model":"fluidaudio-parakeet-v3","language":"en","encoding":"pcm_s16le","sample_rate":16000,"interim_results":true}
+    ```
+    **Client → Server (binary):** Raw PCM audio data (16kHz mono, `pcm_s16le` or `pcm_f32le`)
+
+    **Client → Server (text):** Stop session
+    ```json
+    {"type":"session.stop"}
+    ```
+
+    **Server → Client messages:**
+    - `{"type":"session.created","session_id":"uuid"}` — Session ready
+    - `{"type":"transcription.partial","text":"hello wor"}` — Interim result (may change)
+    - `{"type":"transcription.final","text":"hello world","duration":5.2,"processing_time":0.3}` — Final result
+    - `{"type":"session.stopped","total_duration":10.5}` — Session ended
+    - `{"type":"error","message":"..."}` — Error occurred
+  version: 1.1.0
+  contact:
+    name: FluidAudio
+    url: https://github.com/idiap/fluidaudio
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: http://{host}:{port}
+    description: Custom host/port
+    variables:
+      host:
+        default: localhost
+      port:
+        default: '8080'
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns server health status. Requires no authentication.
+      operationId: getHealth
+      tags:
+        - Server
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /v1/models:
+    get:
+      summary: List available models
+      description: Returns list of available ASR models for transcription.
+      operationId: listModels
+      tags:
+        - Models
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    example: list
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /v1/audio/transcriptions:
+    post:
+      summary: Transcribe audio
+      description: |
+        Transcribe an audio file to text using specified ASR model.
+        OpenAI-compatible endpoint that accepts multipart/form-data with audio file and parameters.
+      operationId: transcribeAudio
+      tags:
+        - Audio
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - model
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio file to transcribe (WAV, MP3, M4A, FLAC)
+                model:
+                  type: string
+                  description: Model ID to use for transcription
+                  enum:
+                    - fluidaudio-parakeet-v2
+                    - fluidaudio-parakeet-v3
+                    - fluidaudio-ctc-vi
+                    - fluidaudio-qwen3-f32
+                    - fluidaudio-qwen3-int8
+                  example: fluidaudio-parakeet-v3
+                language:
+                  type: string
+                  description: ISO 639-1 language code (optional, used by some models for accuracy)
+                  example: en
+                response_format:
+                  type: string
+                  description: Response format
+                  enum:
+                    - json
+                    - text
+                    - verbose_json
+                  default: json
+      responses:
+        '200':
+          description: Successful transcription
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TranscriptionResponse'
+                  - $ref: '#/components/schemas/VerboseTranscriptionResponse'
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Bad request (invalid model, missing file, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized (missing or invalid API key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Payload too large (exceeds max upload size)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Optional Bearer token authentication. If not configured on server, auth is not required.
+
+  schemas:
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+          example: fluidaudio-parakeet-v3
+        object:
+          type: string
+          example: model
+        owned_by:
+          type: string
+          example: fluidaudio
+        permissions:
+          type: array
+          example: []
+
+    TranscriptionResponse:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          description: Transcribed text
+          example: the quick brown fox jumps over the lazy dog
+
+    VerboseTranscriptionResponse:
+      type: object
+      required:
+        - text
+        - model
+        - duration
+        - processing_time
+      properties:
+        text:
+          type: string
+          description: Transcribed text
+          example: the quick brown fox jumps over the lazy dog
+        model:
+          type: string
+          description: Model used for transcription
+          example: fluidaudio-parakeet-v3
+        duration:
+          type: number
+          format: double
+          description: Audio duration in seconds
+          example: 5.2
+        processing_time:
+          type: number
+          format: double
+          description: Processing time in seconds (RTFx = duration / processing_time)
+          example: 0.052
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - message
+            - type
+          properties:
+            message:
+              type: string
+              example: Missing required field - file
+            type:
+              type: string
+              example: bad_request_error

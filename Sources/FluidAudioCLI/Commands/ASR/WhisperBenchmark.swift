@@ -77,7 +77,7 @@ enum WhisperBenchmark {
                 // Default: Models/whisperkit-coreml/openai_whisper-large-v3_turbo/
                 let projectRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
                 dir = projectRoot.appendingPathComponent(
-                    "Models/whisperkit-coreml/openai_whisper-large-v3_turbo")
+                    "Models/whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo")
             }
 
             logger.info("Loading models from \(dir.path)")

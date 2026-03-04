@@ -7,6 +7,7 @@ enum ModelID: String, CaseIterable, Sendable {
     case qwen3F32 = "fluidaudio-qwen3-f32"
     case qwen3Int8 = "fluidaudio-qwen3-int8"
     case ctcVi = "fluidaudio-ctc-vi"
+    case whisper = "fluidaudio-whisper"
 
     /// Human-readable display name.
     var displayName: String {
@@ -16,6 +17,7 @@ enum ModelID: String, CaseIterable, Sendable {
         case .qwen3F32: return "Qwen3-ASR (0.6B, FP16)"
         case .qwen3Int8: return "Qwen3-ASR (0.6B, Int8)"
         case .ctcVi: return "Parakeet CTC Vietnamese (0.6B)"
+        case .whisper: return "Whisper Large v3 Turbo"
         }
     }
 
@@ -25,6 +27,7 @@ enum ModelID: String, CaseIterable, Sendable {
         case .parakeetV2, .parakeetV3: return .parakeet
         case .qwen3F32, .qwen3Int8: return .qwen3
         case .ctcVi: return .ctc
+        case .whisper: return .whisper
         }
     }
 
@@ -32,6 +35,7 @@ enum ModelID: String, CaseIterable, Sendable {
     var supportsLanguage: Bool {
         switch self {
         case .qwen3F32, .qwen3Int8: return true
+        case .whisper: return true
         default: return false
         }
     }
@@ -42,6 +46,7 @@ enum ModelBackend: Sendable {
     case parakeet
     case qwen3
     case ctc
+    case whisper
 }
 
 /// OpenAI-compatible model list response.

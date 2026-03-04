@@ -16,11 +16,13 @@ FluidAudio includes a self-hosted ASR server with an OpenAI-compatible `/v1/audi
 ### 1. Build the Server
 
 ```bash
-cd /Users/vit/offasr/FluidAudio
-swift build -c release --target FluidAudioServer
+cd /path/to/FluidAudio
+swift build -c release --product fluidaudio-server
 ```
 
-Release builds are significantly faster than debug builds (especially for transcription).
+Release builds are significantly faster than debug builds (especially for transcription). Use `--product fluidaudio-server` (not `--target`) — it ensures the binary is linked at `.build/release/fluidaudio-server`.
+
+> **Note:** After `swift package clean`, the `.build/release/` symlink is removed. Running the build command above recreates it.
 
 ### 2. Configure (Optional)
 
@@ -42,8 +44,13 @@ The server automatically loads this file on startup.
 ### 3. Run the Server
 
 ```bash
-cd /Users/vit/offasr/FluidAudio
+cd /path/to/FluidAudio
 .build/release/fluidaudio-server
+```
+
+If `.build/release/fluidaudio-server` is not found (e.g. after `swift package clean`), rebuild with:
+```bash
+swift build -c release --product fluidaudio-server
 ```
 
 Expected output:
@@ -59,14 +66,26 @@ Expected output:
 
 ### Running in the Background
 
-To run the server in the background:
-
 ```bash
 .build/release/fluidaudio-server > server.log 2>&1 &
 echo $! > server.pid
 ```
 
 This stores the process ID in `server.pid` for later shutdown.
+
+### Explore the API
+
+Once the server is running, open the interactive Swagger UI in your browser:
+
+```
+http://localhost:8080/swagger
+```
+
+Or fetch the raw OpenAPI 3.1.0 spec:
+
+```bash
+curl http://localhost:8080/openapi.json | python3 -m json.tool
+```
 
 ## Server Management
 
@@ -148,6 +167,27 @@ Response:
 | `FLUIDAUDIO_SERVER_MAX_AUDIO_SECONDS` | `1800` | Maximum audio duration in seconds (30 min) |
 | `FLUIDAUDIO_LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warning`, `error`, `critical` |
 
+### Authentication
+
+**Public Endpoints** (no authentication required):
+- `GET /health` — Server status check
+- `GET /swagger` — Interactive Swagger UI documentation
+- `GET /openapi.json` — OpenAPI 3.1.0 specification
+
+**Protected Endpoints** (Bearer token required if `FLUIDAUDIO_SERVER_API_KEY` is set):
+- `GET /v1/models` — List available models
+- `POST /v1/audio/transcriptions` — Transcribe audio
+
+**If `FLUIDAUDIO_SERVER_API_KEY` is not set:**
+- All endpoints are accessible without authentication
+- Public endpoints still work normally
+- Protected endpoints work without Bearer token
+
+**If `FLUIDAUDIO_SERVER_API_KEY` is set:**
+- Public endpoints remain unauthenticated and always accessible
+- Protected endpoints require Bearer token in request header
+- Example: `curl -H "Authorization: Bearer devkey" http://localhost:8080/v1/models`
+
 ### Loading Configuration
 
 The server loads configuration in this order (later values override earlier):
@@ -178,6 +218,21 @@ FLUIDAUDIO_LOG_LEVEL=warning
 ```
 
 ## Quick Testing Guide
+
+### Using Swagger UI (Recommended for Exploration)
+
+1. Start the server
+2. Open your browser to `http://localhost:8080/swagger`
+3. Click on `/v1/audio/transcriptions` endpoint
+4. Click **"Try it out"**
+5. Enter your Bearer token in the **"Authorization"** field (e.g., `Bearer devkey`)
+6. Select a model (e.g., `fluidaudio-parakeet-v3`)
+7. Upload an audio file
+8. Click **"Execute"**
+
+The response will show transcription text, processing metrics (duration, RTFx), and error details if any.
+
+### Using cURL (Command Line)
 
 To test the server with sample audio files:
 
@@ -327,9 +382,43 @@ Health check endpoint (no authentication required).
 curl http://127.0.0.1:8080/health
 ```
 
+### `GET /swagger`
+
+Interactive Swagger UI documentation (no authentication required).
+
+Serves a full OpenAPI-compliant Swagger UI interface for exploring and testing the API directly in your browser.
+
+**Example:**
+```bash
+# Open in your browser
+open http://127.0.0.1:8080/swagger
+
+# Or fetch the HTML
+curl http://127.0.0.1:8080/swagger
+```
+
+### `GET /openapi.json`
+
+OpenAPI 3.1.0 specification in JSON format (no authentication required).
+
+Returns the complete OpenAPI specification describing all endpoints, request/response schemas, authentication methods, and error codes.
+
+**Example:**
+```bash
+curl http://127.0.0.1:8080/openapi.json | python3 -m json.tool
+```
+
+**Use Cases:**
+- Load into Postman, Insomnia, or other API clients
+- Generate client libraries with `openapi-generator`
+- Document API integrations programmatically
+- IDE integration (VS Code, etc.) for autocomplete and validation
+
 ### `GET /v1/models`
 
 List available models in OpenAI-compatible format.
+
+**Authentication:** Requires Bearer token if `FLUIDAUDIO_SERVER_API_KEY` is set.
 
 **Response:**
 ```json
@@ -356,6 +445,8 @@ curl -H "Authorization: Bearer devkey" \
 ### `POST /v1/audio/transcriptions`
 
 Transcribe audio using the specified model.
+
+**Authentication:** Requires Bearer token if `FLUIDAUDIO_SERVER_API_KEY` is set.
 
 **Request:**
 

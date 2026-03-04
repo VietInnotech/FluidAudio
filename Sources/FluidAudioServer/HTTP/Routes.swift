@@ -6,13 +6,25 @@ import MultipartKit
 import NIOCore
 
 /// Register all API routes on the given router.
+/// Protected routes (v1/*) are placed inside a group with AuthMiddleware when an API key is set.
 func registerRoutes(
     on router: Router<BasicRequestContext>,
     service: TranscriptionService,
-    config: ServerConfig
+    config: ServerConfig,
+    apiKey: String?
 ) {
+    // Build a route group — add auth middleware only when an API key is configured.
+    // Using a group is the correct Hummingbird v2 pattern so that public routes
+    // registered on the root router are never touched by AuthMiddleware.
+    let api: RouterGroup<BasicRequestContext>
+    if let apiKey {
+        api = router.group().add(middleware: AuthMiddleware(apiKey: apiKey))
+    } else {
+        api = router.group()
+    }
+
     // List models
-    router.get("v1/models") { _, _ -> Response in
+    api.get("v1/models") { _, _ -> Response in
         let list = ModelsListResponse.build()
         let data = try JSONEncoder().encode(list)
         return Response(
@@ -23,7 +35,7 @@ func registerRoutes(
     }
 
     // Transcription endpoint
-    router.post("v1/audio/transcriptions") { request, context -> Response in
+    api.post("v1/audio/transcriptions") { request, context -> Response in
         // Validate content type is multipart/form-data
         guard let contentType = request.headers[.contentType],
             contentType.contains("multipart/form-data")

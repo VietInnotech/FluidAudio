@@ -1,7 +1,7 @@
 import HTTPTypes
 import Hummingbird
 
-/// Middleware that validates Bearer token authentication when an API key is configured.
+/// Middleware that validates Bearer token authentication.
 struct AuthMiddleware: RouterMiddleware {
     typealias Context = BasicRequestContext
 

@@ -234,6 +234,7 @@ swift run fluidaudio transcribe audio.wav
 - Models
   - Automatic Speech Recognition/Transcription
     - [Getting Started](Documentation/ASR/GettingStarted.md)
+    - [ASR Server — REST API](Documentation/ASR/ServerGettingStarted.md)
     - [Last Chunk Handling](Documentation/ASR/LastChunkHandling.md)
   - Speaker Diarization
     - [Speaker Diarization Guide](Documentation/Diarization/GettingStarted.md)

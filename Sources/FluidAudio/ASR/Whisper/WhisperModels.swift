@@ -86,6 +86,78 @@ public struct WhisperModels: Sendable {
         return options
     }
 
+    // MARK: - Download
+
+    /// Download Whisper Large v3 Turbo models from HuggingFace.
+    ///
+    /// Downloads CoreML models from argmaxinc/whisperkit-coreml and tokenizer files
+    /// from openai/whisper-large-v3-turbo (tokenizer is not bundled in the WhisperKit repo).
+    /// - Returns: Path to the directory containing the downloaded models.
+    @discardableResult
+    public static func download(to directory: URL? = nil, force: Bool = false) async throws -> URL {
+        let targetDir = directory ?? defaultCacheDirectory()
+        let modelsRoot = targetDir.deletingLastPathComponent().deletingLastPathComponent()
+
+        if !force && modelsExist(at: targetDir) {
+            logger.info("Whisper models already present at: \(targetDir.path)")
+            return targetDir
+        }
+
+        if force {
+            try? FileManager.default.removeItem(at: targetDir)
+        }
+
+        logger.info("Downloading Whisper Large v3 Turbo CoreML models from HuggingFace...")
+        try await DownloadUtils.downloadRepo(.whisperLargeV3Turbo, to: modelsRoot)
+
+        // The WhisperKit repo does not bundle tokenizer files — download them separately.
+        logger.info("Downloading Whisper tokenizer files from openai/whisper-large-v3-turbo...")
+        try await downloadTokenizerFiles(to: targetDir)
+
+        logger.info("Successfully downloaded Whisper models")
+        return targetDir
+    }
+
+    /// Default cache directory for Whisper models.
+    public static func defaultCacheDirectory() -> URL {
+        ModelCachePaths.modelsRootDirectory()
+            .appendingPathComponent(Repo.whisperLargeV3Turbo.folderName, isDirectory: true)
+    }
+
+    /// Check if all required Whisper model files exist locally.
+    public static func modelsExist(at directory: URL) -> Bool {
+        let fm = FileManager.default
+        let requiredFiles = Array(ModelNames.Whisper.requiredModels) + ["tokenizer.json"]
+        return requiredFiles.allSatisfy { file in
+            fm.fileExists(atPath: directory.appendingPathComponent(file).path)
+        }
+    }
+
+    /// Download tokenizer files from openai/whisper-large-v3-turbo.
+    private static func downloadTokenizerFiles(to directory: URL) async throws {
+        let tokenizerFiles = [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "normalizer.json",
+            "special_tokens_map.json",
+            "added_tokens.json",
+        ]
+        let fm = FileManager.default
+        for fileName in tokenizerFiles {
+            let destPath = directory.appendingPathComponent(fileName)
+            guard !fm.fileExists(atPath: destPath.path) else { continue }
+            let fileURL = try ModelRegistry.resolveModel("openai/whisper-large-v3-turbo", fileName)
+            let data = try await DownloadUtils.fetchHuggingFaceFile(
+                from: fileURL,
+                description: "Whisper tokenizer: \(fileName)"
+            )
+            try data.write(to: destPath)
+            logger.info("Downloaded \(fileName)")
+        }
+    }
+
     // MARK: - Private Helpers
 
     private static func loadModel(

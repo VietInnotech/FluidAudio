@@ -17,7 +17,7 @@ public enum Repo: String, CaseIterable {
     case qwen3Asr = "FluidInference/qwen3-asr-0.6b-coreml/f32"
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case qwen3Asr17b = "FluidInference/qwen3-asr-1.7b-coreml/f32"
-    case whisperLargeV3Turbo = "argmaxinc/whisperkit-coreml/openai_whisper-large-v3_turbo"
+    case whisperLargeV3Turbo = "argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -53,7 +53,7 @@ public enum Repo: String, CaseIterable {
         case .qwen3Asr17b:
             return "qwen3-asr-1.7b-coreml/f32"
         case .whisperLargeV3Turbo:
-            return "whisperkit-coreml/openai_whisper-large-v3_turbo"
+            return "whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
         }
     }
 
@@ -95,7 +95,7 @@ public enum Repo: String, CaseIterable {
         case .qwen3Asr17b:
             return "f32"
         case .whisperLargeV3Turbo:
-            return "openai_whisper-large-v3_turbo"
+            return "openai_whisper-large-v3-v20240930_turbo"
         default:
             return nil
         }

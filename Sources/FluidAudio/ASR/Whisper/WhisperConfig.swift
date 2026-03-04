@@ -23,7 +23,8 @@ public enum WhisperConfig {
     /// Maximum token context for KV cache (half of maxTargetPositions)
     public static let maxTokenContext = 224
     /// KV cache embed dimension (stacked across all decoder layers)
-    public static let kvCacheEmbedDim = 40960
+    /// 4 decoder layers × 1280 dim × 2 (key+value) = 5120 (real Whisper Large v3 Turbo)
+    public static let kvCacheEmbedDim = 5120
     /// Audio sample rate
     public static let sampleRate = 16000
     /// Samples per 30-second window
@@ -129,7 +130,7 @@ public struct WhisperDecodingOptions: Sendable {
         usePrefillCache: Bool = true,
         sampleLength: Int = WhisperConfig.maxTokenContext,
         suppressBlank: Bool = true,
-        firstTokenLogProbThreshold: Float? = -1.5,
+        firstTokenLogProbThreshold: Float? = nil,
         compressionRatioThreshold: Float? = 2.4,
         logProbThreshold: Float? = -1.0
     ) {

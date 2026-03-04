@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HummingbirdWebSocket
 import Logging
 import NIOCore
 
@@ -42,16 +43,37 @@ router.get("health") { _, _ -> Response in
     )
 }
 
-// Apply auth middleware globally if API key is configured
-if let apiKey = config.apiKey {
-    router.add(middleware: AuthMiddleware(apiKey: apiKey))
+// Swagger UI and OpenAPI spec — always public, no authentication required
+router.get("swagger") { _, _ -> Response in
+    let html = getSwaggerUIHTML()
+    return Response(
+        status: .ok,
+        headers: [.contentType: "text/html"],
+        body: .init(byteBuffer: ByteBuffer(string: html))
+    )
 }
 
-// Register API routes (auth middleware is already on the router)
-registerRoutes(on: router, service: service, config: config)
+router.get("openapi.json") { _, _ -> Response in
+    let spec = getOpenAPISpec()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(spec)
+    return Response(
+        status: .ok,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: ByteBuffer(bytes: data))
+    )
+}
+
+// Register API routes — auth middleware applied inside via route group
+registerRoutes(on: router, service: service, config: config, apiKey: config.apiKey)
+
+// Create WebSocket router for streaming audio transcription
+let wsRouter = createStreamingWebSocketRouter(service: service, config: config)
 
 let app = Application(
     router: router,
+    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
     configuration: .init(address: .hostname(config.host, port: config.port))
 )
 
