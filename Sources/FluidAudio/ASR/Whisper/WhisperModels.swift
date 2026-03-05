@@ -6,6 +6,16 @@ import Tokenizers
 
 private let logger = Logger(subsystem: "FluidAudio", category: "WhisperModels")
 
+// MARK: - Whisper Model Variant
+
+/// Selects which Whisper CoreML model to download and load.
+public enum WhisperModelVariant: String, CaseIterable, Sendable {
+    /// OpenAI Whisper Large-v3 Turbo (standard, from argmaxinc/whisperkit-coreml).
+    case standard
+    /// EraX-WoW-Turbo V1.1 — fine-tuned whisper-large-v3-turbo for Vietnamese + 10 languages.
+    case eraXWowTurbo
+}
+
 // MARK: - Whisper Models Container
 
 /// Holds all CoreML models and tokenizer needed for Whisper inference.
@@ -21,10 +31,19 @@ public struct WhisperModels: Sendable {
     public let contextPrefill: MLModel?
     /// Tokenizer for encoding/decoding text
     public let tokenizer: any Tokenizers.Tokenizer
+    /// Maximum token context length for KV cache, read from the TextDecoder model's input description.
+    /// Standard WhisperKit models use 224; EraX uses 448.
+    public let maxTokenContext: Int
 
     // MARK: - Model Loading
 
     /// Load all Whisper models from a directory.
+    ///
+    /// Uses per-model compute units matching WhisperKit defaults:
+    /// - MelSpectrogram: `.cpuAndGPU`
+    /// - AudioEncoder: `.cpuAndNeuralEngine`
+    /// - TextDecoder: `.cpuAndNeuralEngine`
+    /// - TextDecoderContextPrefill: `.cpuOnly`
     ///
     /// Expected directory contents:
     /// - MelSpectrogram.mlmodelc
@@ -38,26 +57,33 @@ public struct WhisperModels: Sendable {
     ) async throws -> WhisperModels {
         let start = CFAbsoluteTimeGetCurrent()
 
+        // Per-model compute unit assignment matching WhisperKit's ModelComputeOptions defaults.
+        // Using `.all` for all models causes NaN in encoder output on Apple Neural Engine.
+        let melUnits: MLComputeUnits = .cpuAndGPU
+        let encoderUnits: MLComputeUnits = .cpuAndNeuralEngine
+        let decoderUnits: MLComputeUnits = .cpuAndNeuralEngine
+        let prefillUnits: MLComputeUnits = .cpuOnly
+
         // Load CoreML models in parallel
         async let melModel = loadModel(
             named: "MelSpectrogram",
             from: directory,
-            computeUnits: computeUnits
+            computeUnits: melUnits
         )
         async let encoderModel = loadModel(
             named: "AudioEncoder",
             from: directory,
-            computeUnits: computeUnits
+            computeUnits: encoderUnits
         )
         async let decoderModel = loadModel(
             named: "TextDecoder",
             from: directory,
-            computeUnits: computeUnits
+            computeUnits: decoderUnits
         )
         async let prefillModel = loadModelOptional(
             named: "TextDecoderContextPrefill",
             from: directory,
-            computeUnits: computeUnits
+            computeUnits: prefillUnits
         )
 
         let mel = try await melModel
@@ -71,12 +97,29 @@ public struct WhisperModels: Sendable {
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         logger.info("Whisper models loaded in \(String(format: "%.2f", elapsed))s")
 
+        // Read maxTokenContext from the TextDecoder model's key_cache input shape.
+        // This allows supporting models compiled with different KV cache sequence lengths
+        // (e.g. standard=224, EraX=448) without hardcoded constants.
+        let maxTokenContext: Int
+        if let keyCacheDesc = decoder.modelDescription.inputDescriptionsByName["key_cache"],
+            let constraint = keyCacheDesc.multiArrayConstraint
+        {
+            // key_cache shape is [1, kvCacheEmbedDim, 1, maxTokenContext]
+            let shape = constraint.shape.map { $0.intValue }
+            maxTokenContext = shape.count >= 4 ? shape[3] : WhisperConfig.maxTokenContext
+            logger.info("TextDecoder KV cache sequence length: \(maxTokenContext)")
+        } else {
+            maxTokenContext = WhisperConfig.maxTokenContext
+            logger.warning("Could not read KV cache shape from TextDecoder, using default \(maxTokenContext)")
+        }
+
         return WhisperModels(
             melSpectrogram: mel,
             audioEncoder: encoder,
             textDecoder: decoder,
             contextPrefill: prefill,
-            tokenizer: tokenizer
+            tokenizer: tokenizer,
+            maxTokenContext: maxTokenContext
         )
     }
 
@@ -95,11 +138,27 @@ public struct WhisperModels: Sendable {
     /// - Returns: Path to the directory containing the downloaded models.
     @discardableResult
     public static func download(to directory: URL? = nil, force: Bool = false) async throws -> URL {
-        let targetDir = directory ?? defaultCacheDirectory()
-        let modelsRoot = targetDir.deletingLastPathComponent().deletingLastPathComponent()
+        try await download(variant: .standard, to: directory, force: force)
+    }
+
+    /// Download Whisper models for the specified variant.
+    ///
+    /// - Parameters:
+    ///   - variant: Which model to download (`.standard` = argmaxinc WhisperKit, `.eraXWowTurbo` = EraX fine-tune).
+    ///   - directory: Override the local cache directory. `nil` uses the default cache.
+    ///   - force: Re-download even if models already exist locally.
+    /// - Returns: Path to the directory containing the downloaded models.
+    @discardableResult
+    public static func download(
+        variant: WhisperModelVariant,
+        to directory: URL? = nil,
+        force: Bool = false
+    ) async throws -> URL {
+        let targetDir = directory ?? defaultCacheDirectory(variant: variant)
+        let modelsRoot = ModelCachePaths.modelsRootDirectory()
 
         if !force && modelsExist(at: targetDir) {
-            logger.info("Whisper models already present at: \(targetDir.path)")
+            logger.info("Whisper models (\(variant.rawValue)) already present at: \(targetDir.path)")
             return targetDir
         }
 
@@ -107,21 +166,28 @@ public struct WhisperModels: Sendable {
             try? FileManager.default.removeItem(at: targetDir)
         }
 
-        logger.info("Downloading Whisper Large v3 Turbo CoreML models from HuggingFace...")
-        try await DownloadUtils.downloadRepo(.whisperLargeV3Turbo, to: modelsRoot)
+        let repo: Repo = variant == .eraXWowTurbo ? .eraXWowTurbo : .whisperLargeV3Turbo
+        logger.info("Downloading Whisper CoreML models (\(variant.rawValue)) from HuggingFace...")
+        try await DownloadUtils.downloadRepo(repo, to: modelsRoot)
 
         // The WhisperKit repo does not bundle tokenizer files — download them separately.
         logger.info("Downloading Whisper tokenizer files from openai/whisper-large-v3-turbo...")
         try await downloadTokenizerFiles(to: targetDir)
 
-        logger.info("Successfully downloaded Whisper models")
+        logger.info("Successfully downloaded Whisper models (\(variant.rawValue))")
         return targetDir
     }
 
-    /// Default cache directory for Whisper models.
+    /// Default cache directory for the standard Whisper model.
     public static func defaultCacheDirectory() -> URL {
-        ModelCachePaths.modelsRootDirectory()
-            .appendingPathComponent(Repo.whisperLargeV3Turbo.folderName, isDirectory: true)
+        defaultCacheDirectory(variant: .standard)
+    }
+
+    /// Default cache directory for a specific variant.
+    public static func defaultCacheDirectory(variant: WhisperModelVariant) -> URL {
+        let repo: Repo = variant == .eraXWowTurbo ? .eraXWowTurbo : .whisperLargeV3Turbo
+        return ModelCachePaths.modelsRootDirectory()
+            .appendingPathComponent(repo.folderName, isDirectory: true)
     }
 
     /// Check if all required Whisper model files exist locally.

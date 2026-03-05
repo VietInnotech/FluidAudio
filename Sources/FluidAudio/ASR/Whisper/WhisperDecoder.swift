@@ -36,6 +36,10 @@ final class WhisperDecodingState {
             shape: [1, embedDimN, 1, maxSeqN], dataType: .float16)
         self.valueCache = try MLMultiArray(
             shape: [1, embedDimN, 1, maxSeqN], dataType: .float16)
+        // Zero-initialize caches — matches WhisperKit's `initialValue: FloatType(0)` approach.
+        // Uninitialised memory in unused cache slots can cause non-deterministic decode results.
+        memset(keyCache.dataPointer, 0, keyCache.count * MemoryLayout<Float16>.size)
+        memset(valueCache.dataPointer, 0, valueCache.count * MemoryLayout<Float16>.size)
         self.kvCacheUpdateMask = try MLMultiArray(
             shape: [1, maxSeqN], dataType: .float16)
         self.decoderKeyPaddingMask = try MLMultiArray(
@@ -103,7 +107,8 @@ struct WhisperDecoder {
         // Pad or trim audio to exactly 30 seconds (480,000 samples)
         var paddedAudio = audio
         if paddedAudio.count < WhisperConfig.windowSamples {
-            paddedAudio.append(contentsOf: [Float](repeating: 0, count: WhisperConfig.windowSamples - paddedAudio.count))
+            paddedAudio.append(
+                contentsOf: [Float](repeating: 0, count: WhisperConfig.windowSamples - paddedAudio.count))
         } else if paddedAudio.count > WhisperConfig.windowSamples {
             paddedAudio = Array(paddedAudio.prefix(WhisperConfig.windowSamples))
         }
@@ -207,9 +212,9 @@ struct WhisperDecoder {
         decoderModel: MLModel,
         state: WhisperDecodingState,
         decodingOptions: WhisperDecodingOptions,
-        predictionOptions: MLPredictionOptions
+        predictionOptions: MLPredictionOptions,
+        maxTokenContext: Int
     ) async throws -> WhisperDecodingResult {
-        let maxTokenContext = WhisperConfig.maxTokenContext
 
         let initialPrompt = state.initialPrompt
         let prefilledIndex = state.cacheLength[0].intValue
@@ -221,8 +226,16 @@ struct WhisperDecoder {
 
         let loopCount = min(decodingOptions.sampleLength, maxTokenContext - 1)
 
-        // Build suppress token set for fast lookup
-        let suppressSet = Set(WhisperConfig.suppressTokens)
+        // Build logits filters — matches WhisperKit's createLogitsFilters order.
+        var logitsFilters: [any WhisperLogitsFiltering] = [
+            WhisperSuppressTokensFilter(suppressTokens: WhisperConfig.suppressTokens)
+        ]
+        if decodingOptions.suppressBlank {
+            logitsFilters.append(WhisperSuppressBlankFilter(sampleBegin: prefilledIndex))
+        }
+        if !decodingOptions.withoutTimestamps {
+            logitsFilters.append(WhisperTimestampRulesFilter(sampleBegin: initialPromptIndex))
+        }
 
         for tokenIndex in prefilledIndex..<loopCount {
             let isPrefill = tokenIndex < initialPromptIndex - 1
@@ -253,24 +266,46 @@ struct WhisperDecoder {
                 throw WhisperError.decodingFailed("No logits in decoder output")
             }
 
-            // Apply logits filtering
-            let filteredLogits = applyLogitsFilters(
-                logits: logits,
-                tokens: currentTokens,
-                tokenIndex: tokenIndex,
-                prefilledIndex: prefilledIndex,
-                initialPromptIndex: initialPromptIndex,
-                suppressSet: suppressSet,
-                suppressBlank: decodingOptions.suppressBlank,
-                withoutTimestamps: decodingOptions.withoutTimestamps
-            )
+            // Apply logits filtering — matches WhisperKit's filter loop
+            var filteredLogits = logits
+            for filter in logitsFilters {
+                filteredLogits = filter.filterLogits(filteredLogits, withTokens: currentTokens)
+            }
 
             // Greedy decode (temperature = 0)
             let (sampledToken, tokenLogProb) = greedySample(logits: filteredLogits)
             nextToken = sampledToken
 
-            // Check for first-token log-prob threshold
-            let isFirstToken = tokenIndex == prefilledIndex
+            // During prefill (prompt injection), skip completion checks and token appending —
+            // we are only building up the KV cache with the forced prompt tokens.
+            if isPrefill {
+                // Update KV cache with model output
+                guard let newKeyCache = output.featureValue(for: "key_cache_updates")?.multiArrayValue,
+                    let newValueCache = output.featureValue(for: "value_cache_updates")?.multiArrayValue
+                else {
+                    throw WhisperError.decodingFailed("Missing KV cache updates")
+                }
+                updateKVCache(
+                    keyTensor: state.keyCache,
+                    keySlice: newKeyCache,
+                    valueTensor: state.valueCache,
+                    valueSlice: newValueCache,
+                    insertAtIndex: tokenIndex
+                )
+
+                // Update masks for next position
+                let padPtr = state.decoderKeyPaddingMask.dataPointer.bindMemory(
+                    to: Float16.self, capacity: maxTokenContext)
+                padPtr[tokenIndex + 1] = 0
+                let maskPtr = state.kvCacheUpdateMask.dataPointer.bindMemory(
+                    to: Float16.self, capacity: maxTokenContext)
+                maskPtr[tokenIndex] = 0
+                maskPtr[tokenIndex + 1] = 1
+                continue
+            }
+
+            // Check for first-token log-prob threshold (first token after prompt)
+            let isFirstToken = tokenIndex == initialPromptIndex
             var isFirstTokenLogProbTooLow = false
             if isFirstToken,
                 let threshold = decodingOptions.firstTokenLogProbThreshold,
@@ -289,11 +324,9 @@ struct WhisperDecoder {
                 break
             }
 
-            // Append token (skip during prefill)
-            if !isPrefill {
-                currentTokens.append(nextToken)
-                logProbs.append(tokenLogProb)
-            }
+            // Append token
+            currentTokens.append(nextToken)
+            logProbs.append(tokenLogProb)
 
             // Update KV cache
             guard let newKeyCache = output.featureValue(for: "key_cache_updates")?.multiArrayValue,
@@ -312,10 +345,10 @@ struct WhisperDecoder {
 
             // Update masks for next position via direct pointer access
             let padPtr = state.decoderKeyPaddingMask.dataPointer.bindMemory(
-                to: Float16.self, capacity: WhisperConfig.maxTokenContext)
+                to: Float16.self, capacity: maxTokenContext)
             padPtr[tokenIndex + 1] = 0
             let maskPtr = state.kvCacheUpdateMask.dataPointer.bindMemory(
-                to: Float16.self, capacity: WhisperConfig.maxTokenContext)
+                to: Float16.self, capacity: maxTokenContext)
             maskPtr[tokenIndex] = 0
             maskPtr[tokenIndex + 1] = 1
         }
@@ -332,7 +365,8 @@ struct WhisperDecoder {
         let compressionRatio = Self.compressionRatio(of: textTokens)
 
         // Decode tokens to text
-        let text = decodingOptions.withoutTimestamps
+        let text =
+            decodingOptions.withoutTimestamps
             ? decodeTextTokens(textTokens, state: state)
             : decodeAllTokens(currentTokens, state: state)
 
@@ -362,11 +396,7 @@ struct WhisperDecoder {
 
     /// Copy KV cache slices into the full cache tensor at the given position.
     /// Uses direct memory access for performance.
-    ///
-    /// Note: `withUnsafeMutableBytes` strides are in **bytes**, while
-    /// `MLMultiArray.strides` are in **elements**. Source offsets use element
-    /// strides (multiplied by bytesPerSample), destination offsets use byte
-    /// strides directly.
+    /// Matches WhisperKit's updateKVCache implementation exactly.
     static func updateKVCache(
         keyTensor: MLMultiArray,
         keySlice: MLMultiArray,
@@ -383,18 +413,18 @@ struct WhisperDecoder {
             keySlice.withUnsafeBytes { keySlicePointer in
                 valueTensor.withUnsafeMutableBytes { valueTensorPointer, valueTargetStrides in
                     valueSlice.withUnsafeBytes { valueSlicePointer in
+                        // Assuming batch size is always 1
                         DispatchQueue.concurrentPerform(iterations: tensorShape[1]) { j in
+                            // Slice size is 3 for prefill and 1 for decode loops
                             for k in 0..<sliceShape[3] {
-                                // Dest strides from withUnsafeMutableBytes are already in bytes
-                                let keyDestOffset = j * keyTargetStrides[1] + (index + k) * keyTargetStrides[3]
-                                let keyDest = keyTensorPointer.baseAddress! + keyDestOffset
-                                // Source strides from .strides are in elements — multiply by bytesPerSample
+                                let keyDestIndex = j * keyTargetStrides[1] + (index + k) * keyTargetStrides[3]
+                                let keyDest = keyTensorPointer.baseAddress! + keyDestIndex * bytesPerSample
                                 let keySliceIndex = j * sliceStrides[1] + k * sliceStrides[3]
                                 let keySrc = keySlicePointer.baseAddress! + keySliceIndex * bytesPerSample
                                 memcpy(keyDest, keySrc, bytesPerSample)
 
-                                let valDestOffset = j * valueTargetStrides[1] + (index + k) * valueTargetStrides[3]
-                                let valDest = valueTensorPointer.baseAddress! + valDestOffset
+                                let valDestIndex = j * valueTargetStrides[1] + (index + k) * valueTargetStrides[3]
+                                let valDest = valueTensorPointer.baseAddress! + valDestIndex * bytesPerSample
                                 let valSliceIndex = j * sliceStrides[1] + k * sliceStrides[3]
                                 let valSrc = valueSlicePointer.baseAddress! + valSliceIndex * bytesPerSample
                                 memcpy(valDest, valSrc, bytesPerSample)
@@ -402,115 +432,6 @@ struct WhisperDecoder {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // MARK: - Logits Filtering
-
-    /// Apply all logits filters: suppress tokens, suppress blank, timestamp rules.
-    static func applyLogitsFilters(
-        logits: MLMultiArray,
-        tokens: [Int],
-        tokenIndex: Int,
-        prefilledIndex: Int,
-        initialPromptIndex: Int,
-        suppressSet: Set<Int>,
-        suppressBlank: Bool,
-        withoutTimestamps: Bool
-    ) -> MLMultiArray {
-        // The logits shape is [1, 1, vocabSize] for this model
-        let vocabSize = logits.shape.last!.intValue
-
-        // 1. Suppress tokens
-        logits.withUnsafeMutableBytes { ptr, strides in
-            let base = ptr.baseAddress!.bindMemory(to: Float16.self, capacity: vocabSize)
-            for token in suppressSet {
-                if token < vocabSize {
-                    base[token] = Float16(-Float.infinity)
-                }
-            }
-
-            // 2. Suppress blank at the first decoded token (right after the full prompt)
-            if suppressBlank && tokens.count == initialPromptIndex {
-                base[WhisperConfig.Tokens.whitespace] = Float16(-Float.infinity)
-                base[WhisperConfig.Tokens.endOfText] = Float16(-Float.infinity)
-            }
-
-            // 3. Timestamp rules (only when timestamps are enabled)
-            if !withoutTimestamps {
-                applyTimestampRules(base: base, vocabSize: vocabSize, tokens: tokens, initialPromptIndex: initialPromptIndex)
-            }
-        }
-
-        return logits
-    }
-
-    /// Apply Whisper's timestamp constraint rules.
-    private static func applyTimestampRules(
-        base: UnsafeMutablePointer<Float16>,
-        vocabSize: Int,
-        tokens: [Int],
-        initialPromptIndex: Int
-    ) {
-        let timeBegin = WhisperConfig.Tokens.timeTokenBegin
-        let eot = WhisperConfig.Tokens.endOfText
-
-        // Suppress noTimestamps
-        if WhisperConfig.Tokens.noTimestamps < vocabSize {
-            base[WhisperConfig.Tokens.noTimestamps] = Float16(-Float.infinity)
-        }
-
-        // Token count after initial prompt
-        let sampledCount = tokens.count - initialPromptIndex
-
-        guard sampledCount >= 1 else { return }
-
-        let lastToken = tokens.last!
-        let lastIsTimestamp = lastToken >= timeBegin
-
-        if sampledCount >= 2 {
-            let penultimate = tokens[tokens.count - 2]
-            let penultimateIsTimestamp = penultimate >= timeBegin
-
-            if lastIsTimestamp {
-                if penultimateIsTimestamp {
-                    // Two consecutive timestamps → force text tokens (no more timestamps)
-                    for i in timeBegin..<vocabSize {
-                        base[i] = Float16(-Float.infinity)
-                    }
-                } else {
-                    // Single timestamp → must be followed by timestamp or EOT (close the pair)
-                    for i in 0..<eot {
-                        base[i] = Float16(-Float.infinity)
-                    }
-                }
-            }
-        }
-
-        // Timestamps can't decrease
-        if lastIsTimestamp && lastToken > timeBegin {
-            for i in timeBegin..<lastToken {
-                base[i] = Float16(-Float.infinity)
-            }
-        }
-
-        // If log-sum-exp of timestamp logits > max text logit, force a timestamp.
-        // Matches WhisperKit/OpenAI Whisper: compare logsumexp(timestamps) vs max(text logits).
-        var maxTextLogit: Float = -Float.infinity
-        for i in 0..<eot {
-            let v = Float(base[i])
-            if v > maxTextLogit { maxTextLogit = v }
-        }
-
-        // Numerically stable logsumexp: sum(exp(t_i - maxText)) > 1.0 iff logsumexp(t_i) > maxText
-        var timestampExpSum: Float = 0
-        for i in timeBegin..<vocabSize {
-            timestampExpSum += exp(Float(base[i]) - maxTextLogit)
-        }
-        if timestampExpSum > 1.0 {
-            for i in 0..<eot {
-                base[i] = Float16(-Float.infinity)
             }
         }
     }
@@ -525,7 +446,6 @@ struct WhisperDecoder {
 
         logits.withUnsafeBytes { ptr in
             let base = ptr.baseAddress!.bindMemory(to: Float16.self, capacity: vocabSize)
-
             for i in 0..<vocabSize {
                 let v = Float(base[i])
                 if v > bestValue {
@@ -535,18 +455,15 @@ struct WhisperDecoder {
             }
         }
 
-        // Compute log softmax for the selected token
-        // logProb = logit - log(sum(exp(logits)))
+        // log prob = logit_best - log(sum(exp(logits))) = -log(sum(exp(logits - logit_best)))
         var logSumExp: Float = 0
         logits.withUnsafeBytes { ptr in
             let base = ptr.baseAddress!.bindMemory(to: Float16.self, capacity: vocabSize)
-            // Numerical stability: subtract max
             for i in 0..<vocabSize {
-                let v = Float(base[i]) - bestValue
-                logSumExp += exp(v)
+                logSumExp += exp(Float(base[i]) - bestValue)
             }
         }
-        let logProb = bestValue - bestValue - log(logSumExp)  // = -log(sumExp)
+        let logProb = -log(logSumExp)
 
         return (bestToken, logProb)
     }
@@ -556,12 +473,7 @@ struct WhisperDecoder {
     /// Compute compression ratio of tokens (used for fallback detection).
     static func compressionRatio(of tokens: [Int]) -> Float {
         guard !tokens.isEmpty else { return 0 }
-        let text = tokens.map { String($0) }.joined(separator: " ")
-        let data = Data(text.utf8)
-        // Simple approximation: ratio of original to "compressed" length
-        // Use zlib-style estimation
         let uniqueTokens = Set(tokens)
-        let ratio = Float(tokens.count) / Float(max(uniqueTokens.count, 1))
-        return ratio
+        return Float(tokens.count) / Float(max(uniqueTokens.count, 1))
     }
 }

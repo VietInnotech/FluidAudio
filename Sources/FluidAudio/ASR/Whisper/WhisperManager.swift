@@ -22,6 +22,7 @@ private let logger = Logger(subsystem: "FluidAudio", category: "WhisperManager")
 @available(macOS 14, iOS 17, *)
 public actor WhisperManager {
     private var models: WhisperModels?
+    private var vadManager: VadManager?
     private lazy var predictionOptions: MLPredictionOptions = {
         WhisperModels.optimizedPredictionOptions()
     }()
@@ -65,11 +66,13 @@ public actor WhisperManager {
 
         // For audio longer than 30s, process in windows
         if audioSamples.count > WhisperConfig.windowSamples {
-            let result = try await transcribeLongAudio(
+            var result = try await transcribeLongAudio(
                 audioSamples: audioSamples,
                 options: opts,
                 models: models
             )
+            // Final pass: remove any residual hallucination substrings
+            result = WhisperHallucinationFilter.removeHallucinationSubstrings(result)
             let elapsed = CFAbsoluteTimeGetCurrent() - start
             let rtfx = audioLength / Float(elapsed)
             logger.info(
@@ -90,6 +93,17 @@ public actor WhisperManager {
         logger.info(
             "Transcribed \(String(format: "%.1f", audioLength))s audio in \(String(format: "%.2f", elapsed))s (RTFx: \(String(format: "%.1f", rtfx))x)"
         )
+
+        if WhisperHallucinationFilter.isHallucination(
+            result,
+            compressionRatioThreshold: opts.compressionRatioThreshold
+                ?? WhisperHallucinationFilter.defaultCompressionRatioThreshold,
+            logProbThreshold: opts.logProbThreshold
+                ?? WhisperHallucinationFilter.defaultLogProbThreshold
+        ) {
+            logger.info("Hallucination suppressed for short audio window")
+            return ""
+        }
 
         return result.text
     }
@@ -124,10 +138,10 @@ public actor WhisperManager {
         let encodeTime = CFAbsoluteTimeGetCurrent() - encodeStart
         logger.debug("Audio encoding: \(String(format: "%.3f", encodeTime))s")
 
-        // Step 3: Prepare decoder state
+        // Step 3: Prepare decoder state (use model-derived KV cache dimensions)
         let state = try WhisperDecodingState(
             kvCacheEmbedDim: WhisperConfig.kvCacheEmbedDim,
-            maxTokenContext: WhisperConfig.maxTokenContext
+            maxTokenContext: models.maxTokenContext
         )
 
         // Build prompt tokens
@@ -142,7 +156,8 @@ public actor WhisperManager {
         if options.usePrefillCache, let prefillModel = models.contextPrefill {
             let prefillStart = CFAbsoluteTimeGetCurrent()
             let languageTokenId = WhisperConfig.languageTokenId(for: options.language)
-            let taskTokenId = options.task == .transcribe
+            let taskTokenId =
+                options.task == .transcribe
                 ? WhisperConfig.Tokens.transcribe : WhisperConfig.Tokens.translate
 
             let prefillCache = try await WhisperDecoder.prefillCache(
@@ -165,17 +180,13 @@ public actor WhisperManager {
             let prefillSize = prefillCache.keyCache.shape[3].intValue
             state.cacheLength[0] = NSNumber(value: Int32(prefillSize))
 
-            // Update masks for prefilled positions via direct pointer
+            // Update masks for prefilled positions (matching WhisperKit exactly)
             let totalPrefilled = prefillSize + 1  // +1 for initial mask
-            let maskPtr = state.kvCacheUpdateMask.dataPointer.bindMemory(
-                to: Float16.self, capacity: WhisperConfig.maxTokenContext)
-            let padPtr = state.decoderKeyPaddingMask.dataPointer.bindMemory(
-                to: Float16.self, capacity: WhisperConfig.maxTokenContext)
             for i in 0..<totalPrefilled {
-                maskPtr[i] = 0
-                padPtr[i] = 0
+                state.kvCacheUpdateMask[i] = 0
+                state.decoderKeyPaddingMask[i] = 0
             }
-            maskPtr[totalPrefilled - 1] = 1
+            state.kvCacheUpdateMask[totalPrefilled - 1] = 1
 
             let prefillTime = CFAbsoluteTimeGetCurrent() - prefillStart
             logger.debug("Prefill: \(String(format: "%.3f", prefillTime))s (cache size: \(prefillSize))")
@@ -188,13 +199,15 @@ public actor WhisperManager {
             decoderModel: models.textDecoder,
             state: state,
             decodingOptions: options,
-            predictionOptions: opts
+            predictionOptions: opts,
+            maxTokenContext: models.maxTokenContext
         )
         let decodeTime = CFAbsoluteTimeGetCurrent() - decodeStart
         logger.debug("Decode: \(String(format: "%.3f", decodeTime))s (\(result.tokens.count) tokens)")
 
         // Step 6: Decode tokens to text using tokenizer
-        let textTokens = options.withoutTimestamps
+        let textTokens =
+            options.withoutTimestamps
             ? result.tokens.filter { $0 < WhisperConfig.Tokens.specialTokenBegin }
             : result.tokens
         let text = models.tokenizer.decode(tokens: textTokens)
@@ -212,8 +225,92 @@ public actor WhisperManager {
 
     // MARK: - Long Audio Transcription
 
-    /// Transcribe audio longer than 30 seconds by windowing.
+    /// Transcribe audio longer than 30 seconds using VAD-gated windowing.
+    ///
+    /// Runs Silero VAD first to identify speech regions, then batches consecutive
+    /// speech segments into ≤30s windows. Silent gaps between segments are zeroed
+    /// out so Whisper never hallucinates over non-speech audio.
     private func transcribeLongAudio(
+        audioSamples: [Float],
+        options: WhisperDecodingOptions,
+        models: WhisperModels
+    ) async throws -> String {
+        // Lazily load VAD model on first use
+        if vadManager == nil {
+            vadManager = try await VadManager()
+            logger.info("VAD model loaded for hallucination suppression")
+        }
+        guard let vad = vadManager else {
+            return try await transcribeLongAudioFallback(audioSamples: audioSamples, options: options, models: models)
+        }
+
+        // Run VAD to detect speech regions
+        let speechSegments = try await vad.segmentSpeech(audioSamples)
+        let audioDuration = Double(audioSamples.count) / Double(WhisperConfig.sampleRate)
+        logger.info(
+            "VAD found \(speechSegments.count) speech segments in \(String(format: "%.1f", audioDuration))s audio")
+
+        guard !speechSegments.isEmpty else { return "" }
+
+        // Batch consecutive speech segments into ≤30s windows.
+        // Each window is a copy of the original audio for that range, with
+        // non-speech gaps preserved (Whisper handles them via timestamps).
+        // Only complete silence windows are skipped.
+        let windowSamples = WhisperConfig.windowSamples
+        var allText: [String] = []
+
+        // Group segments: advance through speech segments, filling windows up to 30s
+        var segmentIndex = 0
+        while segmentIndex < speechSegments.count {
+            let windowStart = speechSegments[segmentIndex].startSample(sampleRate: WhisperConfig.sampleRate)
+
+            // Include as many consecutive segments as fit in one 30s window
+            var windowEnd = speechSegments[segmentIndex].endSample(sampleRate: WhisperConfig.sampleRate)
+            var nextIndex = segmentIndex + 1
+
+            while nextIndex < speechSegments.count {
+                let nextEnd = speechSegments[nextIndex].endSample(sampleRate: WhisperConfig.sampleRate)
+                guard (nextEnd - windowStart) <= windowSamples else { break }
+                windowEnd = nextEnd
+                nextIndex += 1
+            }
+
+            // Clamp window to 30s (handles rare >30s single speech segments)
+            let maxEnd = windowStart + windowSamples
+            windowEnd = min(windowEnd, maxEnd)
+
+            // Extract the audio window (may include brief silences between segments)
+            let clampedStart = max(0, min(windowStart, audioSamples.count))
+            let clampedEnd = max(clampedStart, min(windowEnd, audioSamples.count))
+            guard (clampedEnd - clampedStart) >= WhisperConfig.sampleRate else {
+                segmentIndex = nextIndex
+                continue
+            }
+
+            let windowAudio = Array(audioSamples[clampedStart..<clampedEnd])
+            let result = try await transcribeWindow(audioSamples: windowAudio, options: options, models: models)
+            if !result.text.isEmpty {
+                if WhisperHallucinationFilter.isHallucination(
+                    result,
+                    compressionRatioThreshold: options.compressionRatioThreshold
+                        ?? WhisperHallucinationFilter.defaultCompressionRatioThreshold,
+                    logProbThreshold: options.logProbThreshold
+                        ?? WhisperHallucinationFilter.defaultLogProbThreshold
+                ) {
+                    logger.debug("Skipping hallucinated window at sample offset \(clampedStart)")
+                } else {
+                    allText.append(result.text)
+                }
+            }
+
+            segmentIndex = nextIndex
+        }
+
+        return allText.joined(separator: " ")
+    }
+
+    /// Fallback windowed transcription without VAD (used only if VAD fails to load).
+    private func transcribeLongAudioFallback(
         audioSamples: [Float],
         options: WhisperDecodingOptions,
         models: WhisperModels
@@ -223,25 +320,23 @@ public actor WhisperManager {
         var offset = 0
 
         while offset < audioSamples.count {
-            let remaining = audioSamples.count - offset
-            let chunkSize = min(windowSamples, remaining)
-
-            // Skip very short trailing chunks
-            if chunkSize < WhisperConfig.sampleRate {
-                break
-            }
-
+            let chunkSize = min(windowSamples, audioSamples.count - offset)
+            guard chunkSize >= WhisperConfig.sampleRate else { break }
             let chunk = Array(audioSamples[offset..<(offset + chunkSize)])
-            let result = try await transcribeWindow(
-                audioSamples: chunk,
-                options: options,
-                models: models
-            )
-
+            let result = try await transcribeWindow(audioSamples: chunk, options: options, models: models)
             if !result.text.isEmpty {
-                allText.append(result.text)
+                if WhisperHallucinationFilter.isHallucination(
+                    result,
+                    compressionRatioThreshold: options.compressionRatioThreshold
+                        ?? WhisperHallucinationFilter.defaultCompressionRatioThreshold,
+                    logProbThreshold: options.logProbThreshold
+                        ?? WhisperHallucinationFilter.defaultLogProbThreshold
+                ) {
+                    logger.debug("Skipping hallucinated window at sample offset \(offset)")
+                } else {
+                    allText.append(result.text)
+                }
             }
-
             offset += windowSamples
         }
 

@@ -102,7 +102,7 @@ public actor CtcAsrManager {
             throw ASRError.notInitialized
         }
 
-        guard audioSamples.count >= ASRConstants.sampleRate else {
+        guard audioSamples.count >= ASRConstants.samplesPerEncoderFrame else {
             throw ASRError.invalidAudioData
         }
 

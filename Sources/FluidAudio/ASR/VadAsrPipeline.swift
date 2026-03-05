@@ -96,7 +96,7 @@ public final class VadAsrPipeline {
             guard endSample > startSample else { continue }
 
             let segmentSamples = Array(samples[startSample..<endSample])
-            guard segmentSamples.count >= 16_000 else { continue }
+            guard segmentSamples.count >= ASRConstants.samplesPerEncoderFrame else { continue }
 
             let result = try await transcribeImpl(segmentSamples, source)
             let trimmedText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)

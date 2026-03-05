@@ -34,9 +34,10 @@ private let logger = Logger(subsystem: "FluidAudio", category: "VibeVoiceAsrMana
 @available(macOS 15, iOS 18, *)
 public actor VibeVoiceAsrManager {
     private var models: VibeVoiceAsrModels?
-    private lazy var predictionOptions: MLPredictionOptions = {
-        VibeVoiceAsrModels.optimizedPredictionOptions()
-    }()
+    /// Stored decoder state - held here so it can be explicitly nil-ed between
+    /// transcription calls, ensuring the previous KV-cache (~224 MB) is freed
+    /// before the next one is allocated.
+    private var decoderState: MLState?
     private let audioConverter: AudioConverter = AudioConverter()
 
     public init() {}
@@ -114,12 +115,16 @@ public actor VibeVoiceAsrManager {
         let embedTime = CFAbsoluteTimeGetCurrent() - t4
 
         // Step 5: Autoregressive generation
+        // Explicitly release the previous KV-cache state before allocating the next one.
+        decoderState = nil
+        decoderState = models.decoderStateful.makeState()
         let t5 = CFAbsoluteTimeGetCurrent()
         let generatedTokenIds = try generate(
             initialEmbeddings: initialEmbeddings,
             promptLength: promptTokens.count,
             maxNewTokens: maxNewTokens,
-            models: models
+            models: models,
+            state: decoderState!
         )
         let generateTime = CFAbsoluteTimeGetCurrent() - t5
 
@@ -364,15 +369,13 @@ public actor VibeVoiceAsrManager {
         initialEmbeddings: [[Float]],
         promptLength: Int,
         maxNewTokens: Int,
-        models: VibeVoiceAsrModels
+        models: VibeVoiceAsrModels,
+        state: MLState
     ) throws -> [Int] {
         let hiddenSize = models.hiddenSize
         let headDim = VibeVoiceAsrConfig.headDim
         let maxSeqLen = VibeVoiceAsrConfig.maxCacheSeqLen
         var generatedTokens: [Int] = []
-
-        // Create decoder state
-        let state = models.decoderStateful.makeState()
 
         // Prefill: run all prompt embeddings through decoder
         let prefillLen = initialEmbeddings.count

@@ -409,7 +409,7 @@ public final class AsrManager {
         )
 
         let totalSamples = sampleSource.sampleCount
-        guard totalSamples >= 16_000 else {
+        guard totalSamples >= ASRConstants.samplesPerEncoderFrame else {
             sampleSource.cleanup()
             throw ASRError.invalidAudioData
         }

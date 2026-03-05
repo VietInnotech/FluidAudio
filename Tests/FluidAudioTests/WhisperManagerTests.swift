@@ -314,13 +314,18 @@ final class WhisperManagerIntegrationTests: XCTestCase {
     }
 
     func testTranscribeConsistency() async throws {
-        // Two calls on the same audio should return the same text.
-        // Use silence – Whisper deterministically produces empty/minimal output for silence,
-        // whereas synthetic tones can trigger non-deterministic ANE hallucinations.
+        // Two calls on the same real audio should return the same text.
+        // Silence is intentionally avoided here: silence produces near-zero encoder output
+        // which causes ANE non-determinism (different FP16 rounding paths each run).
+        // Real speech has strong encoder activations that yield deterministic greedy output.
+        let audioPath = projectRoot().appendingPathComponent("Tests/weanxinviec.mp3").path
+        guard FileManager.default.fileExists(atPath: audioPath) else {
+            throw XCTSkip("weanxinviec.mp3 not found — needed for determinism check")
+        }
         let manager = try await loadManager()
-        let silence = [Float](repeating: 0.0, count: WhisperConfig.sampleRate * 5)
-        let text1 = try await manager.transcribe(audioSamples: silence, language: "en")
-        let text2 = try await manager.transcribe(audioSamples: silence, language: "en")
+        let samples = try AudioConverter().resampleAudioFile(path: audioPath)
+        let text1 = try await manager.transcribe(audioSamples: samples, language: "vi")
+        let text2 = try await manager.transcribe(audioSamples: samples, language: "vi")
         XCTAssertEqual(text1, text2, "Transcription must be deterministic for the same input")
     }
 

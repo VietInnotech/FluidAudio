@@ -18,6 +18,7 @@ public enum Repo: String, CaseIterable {
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case qwen3Asr17b = "FluidInference/qwen3-asr-1.7b-coreml/f32"
     case whisperLargeV3Turbo = "argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
+    case eraXWowTurbo = "FluidInference/erax-wow-turbo-v1.1-coreml"
     case vibevoiceAsr = "FluidInference/vibevoice-asr-coreml/f32"
     case vibevoiceAsrInt4 = "FluidInference/vibevoice-asr-coreml/int4"
 
@@ -56,6 +57,8 @@ public enum Repo: String, CaseIterable {
             return "qwen3-asr-1.7b-coreml/f32"
         case .whisperLargeV3Turbo:
             return "whisperkit-coreml/openai_whisper-large-v3-v20240930_turbo"
+        case .eraXWowTurbo:
+            return "erax-wow-turbo-v1.1-coreml"
         case .vibevoiceAsr:
             return "vibevoice-asr-coreml/f32"
         case .vibevoiceAsrInt4:
@@ -370,7 +373,6 @@ public enum ModelNames {
             melSpectrogramFile,
             audioEncoderFile,
             textDecoderFile,
-            contextPrefillFile,
         ]
     }
 
@@ -476,7 +478,7 @@ public enum ModelNames {
             return ModelNames.Sortformer.requiredModels
         case .qwen3Asr, .qwen3AsrInt8, .qwen3Asr17b:
             return ModelNames.Qwen3ASR.requiredModelsFull
-        case .whisperLargeV3Turbo:
+        case .whisperLargeV3Turbo, .eraXWowTurbo:
             return ModelNames.Whisper.requiredModels
         case .vibevoiceAsr, .vibevoiceAsrInt4:
             return ModelNames.VibeVoice.requiredModels

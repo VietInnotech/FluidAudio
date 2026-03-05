@@ -13,6 +13,13 @@ public struct VibeVoiceTranscriptionSegment: Sendable, Codable, Equatable {
     /// End time of the segment (e.g., "2.50s").
     public let endTime: String
 
+    public init(startTime: String, endTime: String, speakerId: String, content: String) {
+        self.startTime = startTime
+        self.endTime = endTime
+        self.speakerId = speakerId
+        self.content = content
+    }
+
     /// Speaker identifier (e.g., "Speaker 1").
     public let speakerId: String
 
@@ -50,6 +57,11 @@ public struct VibeVoiceTranscriptionResult: Sendable {
 
     /// The raw generated text before parsing.
     public let rawText: String
+
+    public init(segments: [VibeVoiceTranscriptionSegment], rawText: String) {
+        self.segments = segments
+        self.rawText = rawText
+    }
 
     /// Number of unique speakers detected.
     public var speakerCount: Int {

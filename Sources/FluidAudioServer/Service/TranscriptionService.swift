@@ -93,7 +93,6 @@ actor TranscriptionService {
     private var qwen3Backend: Any?
     private var qwen3VadManager: VadManager?
     private var ctcManager: CtcAsrManager?
-    // WhisperManager is an actor (Sendable), stored directly.
     private var whisperManager: WhisperManager?
 
     // Busy flag for single-concurrency enforcement
@@ -330,8 +329,16 @@ actor TranscriptionService {
 
         case .whisper:
             serviceLogger.info("downloading Whisper Large v3 Turbo models…")
-            let cacheDir = try await WhisperModels.download()
-            serviceLogger.info("initializing Whisper…")
+            let cacheDir = try await WhisperModels.download(variant: .standard)
+            serviceLogger.info("initializing Whisper Large v3 Turbo…")
+            let manager = WhisperManager()
+            try await manager.loadModels(from: cacheDir)
+            whisperManager = manager
+
+        case .eraXWowTurbo:
+            serviceLogger.info("downloading EraX-WoW-Turbo models…")
+            let cacheDir = try await WhisperModels.download(variant: .eraXWowTurbo)
+            serviceLogger.info("initializing EraX-WoW-Turbo…")
             let manager = WhisperManager()
             try await manager.loadModels(from: cacheDir)
             whisperManager = manager

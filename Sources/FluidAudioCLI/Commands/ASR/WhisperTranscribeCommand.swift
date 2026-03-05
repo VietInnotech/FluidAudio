@@ -16,6 +16,7 @@ enum WhisperTranscribeCommand {
         let audioFile = arguments[0]
         var modelDir: String?
         var language: String = "en"
+        var variant: WhisperModelVariant = .standard
 
         // Parse options
         var i = 1
@@ -34,19 +35,33 @@ enum WhisperTranscribeCommand {
                     language = arguments[i + 1]
                     i += 1
                 }
+            case "--variant":
+                if i + 1 < arguments.count {
+                    switch arguments[i + 1].lowercased() {
+                    case "standard":
+                        variant = .standard
+                    case "erax", "erax-wow-turbo":
+                        variant = .eraXWowTurbo
+                    default:
+                        logger.error("Invalid variant: \(arguments[i + 1]). Use 'standard' or 'erax'")
+                        exit(1)
+                    }
+                    i += 1
+                }
             default:
                 logger.warning("Unknown option: \(arguments[i])")
             }
             i += 1
         }
 
-        await transcribe(audioFile: audioFile, modelDir: modelDir, language: language)
+        await transcribe(audioFile: audioFile, modelDir: modelDir, language: language, variant: variant)
     }
 
     private static func transcribe(
         audioFile: String,
         modelDir: String?,
-        language: String
+        language: String,
+        variant: WhisperModelVariant
     ) async {
         guard #available(macOS 14, iOS 17, *) else {
             logger.error("Whisper requires macOS 14 or later")
@@ -55,13 +70,14 @@ enum WhisperTranscribeCommand {
 
         do {
             let manager = WhisperManager()
+            let variantName = variant == .standard ? "Standard Whisper" : "EraX-WoW-Turbo"
 
             if let dir = modelDir {
                 logger.info("Loading Whisper models from: \(dir)")
                 try await manager.loadModels(from: URL(fileURLWithPath: dir))
             } else {
-                logger.info("Downloading Whisper Large v3 Turbo models from HuggingFace...")
-                let cacheDir = try await WhisperModels.download()
+                logger.info("Downloading \(variantName) models from HuggingFace...")
+                let cacheDir = try await WhisperModels.download(variant: variant)
                 try await manager.loadModels(from: cacheDir)
             }
 
@@ -73,7 +89,7 @@ enum WhisperTranscribeCommand {
             )
 
             // Transcribe
-            logger.info("Transcribing (language: \(language))...")
+            logger.info("Transcribing with \(variantName) (language: \(language))...")
             let startTime = CFAbsoluteTimeGetCurrent()
             let text = try await manager.transcribe(audioSamples: samples, language: language)
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
@@ -81,7 +97,7 @@ enum WhisperTranscribeCommand {
 
             // Output
             logger.info(String(repeating: "=", count: 50))
-            logger.info("WHISPER TRANSCRIPTION")
+            logger.info("WHISPER TRANSCRIPTION (\(variantName))")
             logger.info(String(repeating: "=", count: 50))
             print(text)
             logger.info("")
@@ -101,11 +117,13 @@ enum WhisperTranscribeCommand {
 
             Options:
               --model-dir <path>    Path to local Whisper model directory (auto-downloads if not specified)
-              --language, -l <code> Language code (e.g. en, fr, de). Default: en
+              --variant <name>      Model variant: 'standard' (default) or 'erax' for EraX-WoW-Turbo
+              --language, -l <code> Language code (e.g. en, vi, fr, de). Default: en
               --help, -h            Show this help message
 
             Examples:
               fluidaudio whisper-transcribe audio.wav
+              fluidaudio whisper-transcribe audio.wav --variant erax --language vi
               fluidaudio whisper-transcribe audio.wav --language fr
               fluidaudio whisper-transcribe audio.wav --model-dir Models/whisperkit-coreml/openai_whisper-large-v3-v20240930
             """)

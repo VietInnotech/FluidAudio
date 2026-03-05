@@ -99,9 +99,6 @@ enum VibeVoiceTranscribeCommand {
                 let dirURL = URL(fileURLWithPath: dir)
                 try await manager.loadModels(from: dirURL)
             } else {
-                logger.info(
-                    "Downloading VibeVoice-ASR \(variant.rawValue) models from HuggingFace..."
-                )
                 let cacheDir = try await VibeVoiceAsrModels.download(variant: variant)
                 try await manager.loadModels(from: cacheDir)
             }
@@ -113,26 +110,65 @@ enum VibeVoiceTranscribeCommand {
                 channels: 1,
                 interleaved: false
             )!
-            let samples = try AudioConverter(targetFormat: targetFormat).resampleAudioFile(
+            let allSamples = try AudioConverter(targetFormat: targetFormat).resampleAudioFile(
                 path: audioFile
             )
-            let duration = Double(samples.count) / Double(VibeVoiceAsrConfig.sampleRate)
+            let totalDuration = Double(allSamples.count) / Double(VibeVoiceAsrConfig.sampleRate)
             logger.info(
-                "Audio: \(String(format: "%.2f", duration))s, \(samples.count) samples at 24kHz"
+                "Audio: \(String(format: "%.2f", totalDuration))s, \(allSamples.count) samples at 24kHz"
+            )
+
+            // VibeVoice encoders require exactly 10 seconds (240,000 samples at 24kHz).
+            // Split audio into 10-second chunks, pad the last chunk if needed.
+            let chunkSize = 240_000
+            let chunks = stride(from: 0, to: allSamples.count, by: chunkSize).map { start -> [Float] in
+                let end = min(start + chunkSize, allSamples.count)
+                var chunk = Array(allSamples[start..<end])
+                if chunk.count < chunkSize {
+                    chunk.append(contentsOf: Array(repeating: Float(0), count: chunkSize - chunk.count))
+                }
+                return chunk
+            }
+            logger.info(
+                "Processing \(chunks.count) chunk(s) of 10s each (context: \(context ?? "none"), maxTokens: \(maxTokens))..."
             )
 
             // Transcribe
-            logger.info(
-                "Transcribing with VibeVoice-ASR (context: \(context ?? "none"), maxTokens: \(maxTokens))..."
-            )
             let startTime = CFAbsoluteTimeGetCurrent()
-            let result = try await manager.transcribe(
-                audioSamples: samples,
-                context: context,
-                maxNewTokens: maxTokens
-            )
+            var allSegments: [VibeVoiceTranscriptionSegment] = []
+            var rawTexts: [String] = []
+
+            for (chunkIndex, chunkSamples) in chunks.enumerated() {
+                let chunkOffsetSeconds = Double(chunkIndex * chunkSize) / Double(VibeVoiceAsrConfig.sampleRate)
+                let chunkResult = try await manager.transcribe(
+                    audioSamples: chunkSamples,
+                    context: context,
+                    maxNewTokens: maxTokens
+                )
+                rawTexts.append(chunkResult.rawText)
+
+                // Offset segment timestamps by the chunk's position in the full audio
+                if chunkOffsetSeconds > 0 {
+                    let offsetSegments = chunkResult.segments.map { seg -> VibeVoiceTranscriptionSegment in
+                        let startSecs = (Double(seg.startTime) ?? 0) + chunkOffsetSeconds
+                        let endSecs = (Double(seg.endTime) ?? 0) + chunkOffsetSeconds
+                        return VibeVoiceTranscriptionSegment(
+                            startTime: String(format: "%.2f", startSecs),
+                            endTime: String(format: "%.2f", endSecs),
+                            speakerId: seg.speakerId,
+                            content: seg.content
+                        )
+                    }
+                    allSegments.append(contentsOf: offsetSegments)
+                } else {
+                    allSegments.append(contentsOf: chunkResult.segments)
+                }
+            }
+
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-            let rtfx = duration / elapsed
+            let rtfx = totalDuration / elapsed
+            let result = VibeVoiceTranscriptionResult(segments: allSegments, rawText: rawTexts.joined(separator: "\n"))
+            let duration = totalDuration
 
             if jsonOutput {
                 // JSON output mode

@@ -128,7 +128,7 @@ public struct WhisperDecodingOptions: Sendable {
         temperature: Float = 0,
         withoutTimestamps: Bool = true,
         usePrefillCache: Bool = true,
-        sampleLength: Int = WhisperConfig.maxTokenContext,
+        sampleLength: Int = WhisperConfig.maxTargetPositions,
         suppressBlank: Bool = true,
         firstTokenLogProbThreshold: Float? = nil,
         compressionRatioThreshold: Float? = 2.4,

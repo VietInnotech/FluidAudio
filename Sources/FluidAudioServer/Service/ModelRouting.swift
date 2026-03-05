@@ -8,7 +8,8 @@ enum ModelID: String, CaseIterable, Sendable {
     case qwen3Int8 = "fluidaudio-qwen3-int8"
     case qwen3Large = "fluidaudio-qwen3-1.7b"
     case ctcVi = "fluidaudio-ctc-vi"
-    case whisper = "fluidaudio-whisper"
+    case whisper = "whisper-large-v3-turbo"
+    case eraXWowTurbo = "whisper-erax-wow-turbo"
 
     /// Human-readable display name.
     var displayName: String {
@@ -20,6 +21,7 @@ enum ModelID: String, CaseIterable, Sendable {
         case .qwen3Large: return "Qwen3-ASR (1.7B, FP16)"
         case .ctcVi: return "Parakeet CTC Vietnamese (0.6B)"
         case .whisper: return "Whisper Large v3 Turbo"
+        case .eraXWowTurbo: return "Whisper EraX-WoW-Turbo (Vietnamese)"
         }
     }
 
@@ -29,15 +31,14 @@ enum ModelID: String, CaseIterable, Sendable {
         case .parakeetV2, .parakeetV3: return .parakeet
         case .qwen3F32, .qwen3Int8, .qwen3Large: return .qwen3
         case .ctcVi: return .ctc
-        case .whisper: return .whisper
+        case .whisper, .eraXWowTurbo: return .whisper
         }
     }
 
     /// Whether this model accepts a language parameter.
     var supportsLanguage: Bool {
         switch self {
-        case .qwen3F32, .qwen3Int8, .qwen3Large: return true
-        case .whisper: return true
+        case .qwen3F32, .qwen3Int8, .qwen3Large, .whisper, .eraXWowTurbo: return true
         default: return false
         }
     }
