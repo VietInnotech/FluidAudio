@@ -52,6 +52,10 @@ swift run fluidaudio vad-benchmark --num-files 40 --threshold 0.5
 # Dataset download
 swift run fluidaudio download --dataset ami-sdm
 swift run fluidaudio download --dataset librispeech-test-clean
+
+# Server (use product name: fluidaudio-server)
+swift run fluidaudio-server
+fluidaudio-server  # When installed globally
 ```
 
 ## Architecture
@@ -64,7 +68,8 @@ FluidAudio/
 │   │   ├── Diarizer/        # Speaker diarization system
 │   │   ├── VAD/             # Voice Activity Detection
 │   │   └── Shared/          # AudioConverter, ModelDownloader, ANEMemoryOptimizer
-│   └── FluidAudioCLI/       # CLI tool (macOS only)
+│   ├── FluidAudioCLI/       # CLI tool (macOS only) — product: fluidaudio
+│   └── FluidAudioServer/    # Server (macOS only) — product: fluidaudio-server
 └── Tests/FluidAudioTests/   # Comprehensive test suite
 ```
 

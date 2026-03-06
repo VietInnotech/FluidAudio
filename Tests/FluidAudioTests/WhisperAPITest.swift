@@ -12,7 +12,7 @@ final class WhisperAPITest: XCTestCase {
         language: String
     ) async throws -> String {
         let manager = WhisperManager()
-        
+
         // Load models
         let dir = WhisperModels.defaultCacheDirectory(variant: variant)
         guard WhisperModels.modelsExist(at: dir) else {
@@ -21,7 +21,7 @@ final class WhisperAPITest: XCTestCase {
         try await manager.loadModels(from: dir)
         let available = await manager.isAvailable
         XCTAssertTrue(available)
-        
+
         // Load test audio
         let audioPath = projectRoot()
             .appendingPathComponent("Tests/weanxinviec.mp3").path
@@ -29,7 +29,7 @@ final class WhisperAPITest: XCTestCase {
             throw XCTSkip("Test audio not found")
         }
         let samples = try AudioConverter().resampleAudioFile(path: audioPath)
-        
+
         // Transcribe
         let text = try await manager.transcribe(audioSamples: samples, language: language)
         return text
@@ -50,10 +50,10 @@ final class WhisperAPITest: XCTestCase {
     func testBothVariantsProduceOutput() async throws {
         let standard = try await loadManagerAndTranscribe(variant: .standard, language: "vi")
         let erax = try await loadManagerAndTranscribe(variant: .eraXWowTurbo, language: "vi")
-        
+
         XCTAssertFalse(standard.isEmpty, "Standard should not be empty")
         XCTAssertFalse(erax.isEmpty, "EraX should not be empty")
-        
+
         print("\n Standard: \(standard.prefix(80))")
         print("EraX:     \(erax.prefix(80))")
     }
