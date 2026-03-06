@@ -42,6 +42,8 @@ public enum WhisperHallucinationFilter {
         "Cảm ơn các bạn đã theo dõi và hẹn gặp lại.",
         "Các bạn có thể nhận thêm nhiều thông tin",
         "Cảm ơn các bạn đã theo dõi",
+        "Các bạn có thể nhận thêm những thông tin",
+        "Đừng quên đăng ký kênh để ủng hộ kênh của mình nhé",
         "Cảm ơn các bạn đã theo dõi kênh",
         "Để không bỏ lỡ những gì hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn.",
 
