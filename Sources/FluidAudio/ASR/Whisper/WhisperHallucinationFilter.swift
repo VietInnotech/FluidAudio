@@ -40,8 +40,10 @@ public enum WhisperHallucinationFilter {
         "Hãy subscribe cho kênh lalaschool Để không bỏ lỡ những video hấp dẫn",
         "Để không bỏ lỡ những video hấp dẫn",
         "Cảm ơn các bạn đã theo dõi và hẹn gặp lại.",
-        "Cảm ơn các bạn đã theo dõi.",
-        "Để không bỏ lỡ những gì hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn."
+        "Các bạn có thể nhận thêm nhiều thông tin",
+        "Cảm ơn các bạn đã theo dõi",
+        "Cảm ơn các bạn đã theo dõi kênh",
+        "Để không bỏ lỡ những gì hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn.",
 
         // English
         "Thank you for watching",

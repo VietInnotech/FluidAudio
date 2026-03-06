@@ -95,8 +95,9 @@ actor TranscriptionService {
     private var ctcManager: CtcAsrManager?
     private var whisperManager: WhisperManager?
 
-    // Busy flag for single-concurrency enforcement
-    private var isBusy = false
+    // Single-concurrency enforcement — at most one inference runs at a time.
+    // Up to 4 additional callers may suspend waiting in FIFO order.
+    private let capacityQueue = SerialWorkQueue(maxDepth: 4)
 
     init(config: ServerConfig) {
         self.config = config
@@ -112,12 +113,7 @@ actor TranscriptionService {
         model: ModelID,
         language: String?
     ) async throws -> TranscriptionResult {
-        guard !isBusy else {
-            serviceLogger.warning("rejected: server busy (model=\(model.rawValue))")
-            throw ServerError.tooManyRequests("Server is currently processing another request. Try again later.")
-        }
-
-        // Validate audio duration
+        // Validate audio duration before queuing so we fail fast without occupying a slot.
         let durationSeconds = Double(audioSamples.count) / 16_000.0
         guard durationSeconds <= Double(config.maxAudioSeconds) else {
             throw ServerError.badRequest(
@@ -125,13 +121,29 @@ actor TranscriptionService {
             )
         }
 
-        isBusy = true
-        defer { isBusy = false }
+        do {
+            try await capacityQueue.acquire()
+        } catch SerialWorkQueueError.queueFull(let maxDepth) {
+            serviceLogger.warning(
+                "queue full (\(maxDepth) max) — rejecting transcribe model=\(model.rawValue)"
+            )
+            throw ServerError.tooManyRequests(
+                "Server queue is full (\(maxDepth) requests pending). Try again later."
+            )
+        }
 
-        // Switch model if needed
-        try await ensureModelLoaded(model)
-
-        return try await performTranscription(audioSamples: audioSamples, model: model, language: language)
+        serviceLogger.debug("capacity acquired: transcribe model=\(model.rawValue)")
+        do {
+            try await ensureModelLoaded(model)
+            let result = try await performTranscription(
+                audioSamples: audioSamples, model: model, language: language
+            )
+            await capacityQueue.release()
+            return result
+        } catch {
+            await capacityQueue.release()
+            throw error
+        }
     }
 
     // MARK: - Streaming API
@@ -140,24 +152,30 @@ actor TranscriptionService {
     ///
     /// Call `releaseStreaming()` when the session ends to allow other requests.
     func acquireForStreaming(model: ModelID) async throws {
-        guard !isBusy else {
-            serviceLogger.warning("streaming rejected: server busy")
-            throw ServerError.tooManyRequests("Server is currently processing another request. Try again later.")
+        do {
+            try await capacityQueue.acquire()
+        } catch SerialWorkQueueError.queueFull(let maxDepth) {
+            serviceLogger.warning(
+                "queue full (\(maxDepth) max) — rejecting streaming model=\(model.rawValue)"
+            )
+            throw ServerError.tooManyRequests(
+                "Server queue is full (\(maxDepth) requests pending). Try again later."
+            )
         }
-        isBusy = true
+
         do {
             try await ensureModelLoaded(model)
         } catch {
-            isBusy = false
+            await capacityQueue.release()
             throw error
         }
         serviceLogger.info("streaming session acquired: \(model.rawValue)")
     }
 
     /// Release the service after a streaming session ends.
-    func releaseStreaming() {
-        isBusy = false
+    func releaseStreaming() async {
         serviceLogger.info("streaming session released")
+        await capacityQueue.release()
     }
 
     /// Transcribe audio samples during a streaming session (skips busy check).
