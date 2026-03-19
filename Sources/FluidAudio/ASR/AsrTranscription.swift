@@ -92,6 +92,7 @@ extension AsrManager {
                 throw ASRError.notInitialized
             }
 
+            try Task.checkCancellation()
             let preprocessorOutput = try await preprocessorModel.compatPrediction(
                 from: preprocessorInput,
                 options: predictionOptions
@@ -103,6 +104,7 @@ extension AsrManager {
                 originalInput: preprocessorInput
             )
 
+            try Task.checkCancellation()
             let encoderOutputProvider = try await encoderModel.compatPrediction(
                 from: encoderInput,
                 options: predictionOptions
@@ -528,6 +530,9 @@ extension AsrManager {
             }
 
             let vocabConfig = vocabSizeConfig ?? ContextBiasingConstants.rescorerConfig(forVocabSize: 0)
+            // Use the higher of the size-based default and the caller-specified threshold
+            // so that CustomVocabularyContext.minSimilarity is respected when stricter.
+            let effectiveMinSimilarity = max(vocabConfig.minSimilarity, vocab.minSimilarity)
 
             let rescoreOutput = rescorer.ctcTokenRescore(
                 transcript: result.text,
@@ -536,7 +541,7 @@ extension AsrManager {
                 frameDuration: spotResult.frameDuration,
                 cbw: vocabConfig.cbw,
                 marginSeconds: 0.5,
-                minSimilarity: vocabConfig.minSimilarity
+                minSimilarity: effectiveMinSimilarity
             )
 
             guard rescoreOutput.wasModified else {

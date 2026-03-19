@@ -59,6 +59,10 @@ struct FluidAudioCLI {
             await SortformerCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "sortformer-benchmark":
             await SortformerBenchmark.run(arguments: Array(arguments.dropFirst(2)))
+        case "lseend":
+            await LSEENDCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "lseend-benchmark":
+            await LSEENDBenchmark.run(arguments: Array(arguments.dropFirst(2)))
         case "qwen3-benchmark":
             await Qwen3AsrBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
         case "qwen3-transcribe":
@@ -69,10 +73,10 @@ struct FluidAudioCLI {
             await WhisperTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "ctc-transcribe":
             await CtcTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
-        case "vibevoice-transcribe":
-            await VibeVoiceTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "zipformer-transcribe":
             await ZipformerTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "g2p-benchmark":
+            await G2PBenchmark.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
             printUsage()
         default:
@@ -104,9 +108,11 @@ struct FluidAudioCLI {
                 sortformer              Run Sortformer streaming diarization
                 sortformer-benchmark    Run Sortformer benchmark on AMI dataset
                 ctc-transcribe          Transcribe audio using CTC greedy decoding (Vietnamese)
-                whisper-transcribe       Transcribe audio using Whisper Large v3 Turbo
+                whisper-transcribe      Transcribe audio using Whisper Large v3 Turbo
                 whisper-benchmark       Run Whisper Large v3 Turbo benchmark on LibriSpeech
-                vibevoice-transcribe    Transcribe audio with VibeVoice-ASR (ASR+diarization)
+                lseend                  Run LS-EEND diarization on a single file
+                lseend-benchmark        Run LS-EEND benchmark on AMI dataset
+                g2p-benchmark           Run multilingual G2P benchmark
                 zipformer-transcribe    Transcribe audio using Zipformer VN (Vietnamese, native ONNX)
                 download                Download evaluation datasets
                 help                    Show this help message

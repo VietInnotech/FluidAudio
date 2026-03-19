@@ -1,5 +1,4 @@
 @preconcurrency import CoreML
-import FluidAudio
 import Foundation
 import OSLog
 
@@ -124,15 +123,15 @@ public actor PocketTtsModelStore {
         return dir
     }
 
-    /// Load and cache voice conditioning data.
-    public func voiceData(for voice: String) throws -> PocketTtsVoiceData {
+    /// Load and cache voice conditioning data, downloading from HuggingFace if missing.
+    public func voiceData(for voice: String) async throws -> PocketTtsVoiceData {
         if let cached = voiceCache[voice] {
             return cached
         }
         guard let repoDir = repoDirectory else {
             throw PocketTTSError.modelNotFound("PocketTTS repository not loaded")
         }
-        let data = try PocketTtsResourceDownloader.ensureVoice(voice, repoDirectory: repoDir)
+        let data = try await PocketTtsResourceDownloader.ensureVoice(voice, repoDirectory: repoDir)
         voiceCache[voice] = data
         return data
     }

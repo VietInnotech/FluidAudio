@@ -105,7 +105,8 @@ extension AsrModels {
     public static func load(
         from directory: URL,
         configuration: MLModelConfiguration? = nil,
-        version: AsrModelVersion = .v3
+        version: AsrModelVersion = .v3,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> AsrModels {
         logger.info("Loading ASR models from: \(directory.path)")
 
@@ -122,7 +123,8 @@ extension AsrModels {
                 version.repo,
                 modelNames: [spec.fileName],
                 directory: parentDirectory,
-                computeUnits: spec.computeUnits
+                computeUnits: spec.computeUnits,
+                progressHandler: progressHandler
             )
 
             if let model = models[spec.fileName] {
@@ -143,7 +145,8 @@ extension AsrModels {
             version.repo,
             modelNames: [Names.decoderFile, Names.jointFile],
             directory: parentDirectory,
-            computeUnits: config.computeUnits
+            computeUnits: config.computeUnits,
+            progressHandler: progressHandler
         )
 
         guard let decoderModel = decoderAndJoint[Names.decoderFile],
@@ -200,19 +203,23 @@ extension AsrModels {
 
     public static func loadFromCache(
         configuration: MLModelConfiguration? = nil,
-        version: AsrModelVersion = .v3
+        version: AsrModelVersion = .v3,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> AsrModels {
         let cacheDir = defaultCacheDirectory(for: version)
-        return try await load(from: cacheDir, configuration: configuration, version: version)
+        return try await load(
+            from: cacheDir, configuration: configuration, version: version,
+            progressHandler: progressHandler)
     }
 
     /// Load models with automatic recovery on compilation failures
     public static func loadWithAutoRecovery(
         from directory: URL? = nil,
-        configuration: MLModelConfiguration? = nil
+        configuration: MLModelConfiguration? = nil,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> AsrModels {
         let targetDir = directory ?? defaultCacheDirectory()
-        return try await load(from: targetDir, configuration: configuration)
+        return try await load(from: targetDir, configuration: configuration, progressHandler: progressHandler)
     }
 
     /// Load models with ANE-optimized configurations
@@ -287,7 +294,8 @@ extension AsrModels {
     public static func download(
         to directory: URL? = nil,
         force: Bool = false,
-        version: AsrModelVersion = .v3
+        version: AsrModelVersion = .v3,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> URL {
         let targetDir = directory ?? defaultCacheDirectory(for: version)
         logger.info("Downloading ASR models to: \(targetDir.path)")
@@ -325,7 +333,8 @@ extension AsrModels {
                 version.repo,
                 modelNames: [spec.fileName],
                 directory: parentDir,
-                computeUnits: spec.computeUnits
+                computeUnits: spec.computeUnits,
+                progressHandler: progressHandler
             )
         }
 
@@ -336,10 +345,13 @@ extension AsrModels {
     public static func downloadAndLoad(
         to directory: URL? = nil,
         configuration: MLModelConfiguration? = nil,
-        version: AsrModelVersion = .v3
+        version: AsrModelVersion = .v3,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> AsrModels {
-        let targetDir = try await download(to: directory, version: version)
-        return try await load(from: targetDir, configuration: configuration, version: version)
+        let targetDir = try await download(to: directory, version: version, progressHandler: progressHandler)
+        return try await load(
+            from: targetDir, configuration: configuration, version: version,
+            progressHandler: progressHandler)
     }
 
     public static func modelsExist(at directory: URL) -> Bool {

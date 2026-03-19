@@ -32,4 +32,10 @@ struct TdtHypothesis {
 
     /// Get the maximum timestamp value, or 0 if no timestamps
     var maxTimestamp: Int { timestamps.max() ?? 0 }
+
+    /// Exposes aligned token data as a tuple for callers and tests that consume
+    /// the hypothesis as decoded outputs rather than as mutable state.
+    var destructured: (tokens: [Int], timestamps: [Int], confidences: [Float]) {
+        (ySequence, timestamps, tokenConfidences)
+    }
 }

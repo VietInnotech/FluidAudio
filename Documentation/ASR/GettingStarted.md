@@ -7,9 +7,8 @@
 | **Parakeet TDT v3** | Batch | 25 European | Real-time (~120x RTF) | General multilingual accuracy |
 | **Parakeet TDT v2** | Batch | English only | Fast & accurate | English transcription |
 | **Parakeet EOU** | Streaming | Multilingual | End-of-utterance detection | Real-time streaming |
-| **VibeVoice-ASR** | Batch | 50+ | **Diarization, timestamps** | Meetings, interviews, multi-speaker |
-
-See [VibeVoice.md](VibeVoice.md) for speaker diarization and timestamped output.
+| **Parakeet CTC Vietnamese** | Batch | Vietnamese | Lightweight CTC decoding | Fast Vietnamese transcription |
+| **Whisper Large v3 Turbo** | Batch | Multilingual | Whisper-style decoding | Whisper compatibility |
 
 ## Batch Transcription
 
@@ -22,7 +21,7 @@ See [VibeVoice.md](VibeVoice.md) for speaker diarization and timestamped output.
 ## Streaming ASR (Parakeet EOU)
 
 - Model: `FluidInference/parakeet-eou-1.1b-coreml`
-- Chunk Sizes: 160ms (lowest latency), 320ms, 1600ms (highest throughput)
+- Chunk Sizes: 160ms (lowest latency), 320ms, 1280ms (highest throughput)
 - End-of-Utterance Detection: Built-in silence detection with configurable debounce
 
 ## Choosing a model version
@@ -86,36 +85,36 @@ Working offline? Follow the [Manual Model Loading guide](ManualModelLoading.md) 
 
 ```bash
 # Transcribe an audio file (batch)
-swift run fluidaudio transcribe audio.wav
+swift run fluidaudiocli transcribe audio.wav
 
 # English-only run (better recall)
-swift run fluidaudio transcribe audio.wav --model-version v2
+swift run fluidaudiocli transcribe audio.wav --model-version v2
 
 # Transcribe multiple files in parallel
-swift run fluidaudio multi-stream audio1.wav audio2.wav
+swift run fluidaudiocli multi-stream audio1.wav audio2.wav
 
 # Benchmark ASR on LibriSpeech
-swift run fluidaudio asr-benchmark --subset test-clean --max-files 50
+swift run fluidaudiocli asr-benchmark --subset test-clean --max-files 50
 
 # Run the English-only benchmark
-swift run fluidaudio asr-benchmark --subset test-clean --max-files 50 --model-version v2
+swift run fluidaudiocli asr-benchmark --subset test-clean --max-files 50 --model-version v2
 
 # Multilingual ASR (FLEURS) benchmark
-swift run fluidaudio fleurs-benchmark --languages en_us,fr_fr --samples 10
+swift run fluidaudiocli fleurs-benchmark --languages en_us,fr_fr --samples 10
 
 # Download LibriSpeech test sets
-swift run fluidaudio download --dataset librispeech-test-clean
-swift run fluidaudio download --dataset librispeech-test-other
+swift run fluidaudiocli download --dataset librispeech-test-clean
+swift run fluidaudiocli download --dataset librispeech-test-other
 ```
 
 ## Streaming CLI (Parakeet EOU)
 
 ```bash
 # Transcribe a file (--use-cache auto-downloads models)
-swift run fluidaudio parakeet-eou --input audio.wav --use-cache
+swift run fluidaudiocli parakeet-eou --input audio.wav --use-cache
 
 # Run benchmark on LibriSpeech test-clean
-swift run fluidaudio parakeet-eou --benchmark --chunk-size 160 --max-files 100 --use-cache
+swift run fluidaudiocli parakeet-eou --benchmark --chunk-size 160 --max-files 100 --use-cache
 ```
 
 **Options:** `--input <path>`, `--benchmark`, `--max-files <n>`, `--chunk-size <160|320|1600>`, `--eou-debounce <ms>`, `--use-cache`, `--models <path>`, `--output <path>`, `--verbose`

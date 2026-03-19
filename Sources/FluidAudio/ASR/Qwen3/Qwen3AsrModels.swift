@@ -149,9 +149,10 @@ public struct Qwen3AsrModels: Sendable {
     public static func downloadAndLoad(
         variant: Qwen3AsrVariant = .f32,
         to directory: URL? = nil,
-        computeUnits: MLComputeUnits = .all
+        computeUnits: MLComputeUnits = .all,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> Qwen3AsrModels {
-        let targetDir = try await download(variant: variant, to: directory)
+        let targetDir = try await download(variant: variant, to: directory, progressHandler: progressHandler)
         return try await load(from: targetDir, computeUnits: computeUnits)
     }
 
@@ -161,12 +162,14 @@ public struct Qwen3AsrModels: Sendable {
     ///   - variant: Model variant to download (`.f32` or `.int8`).
     ///   - directory: Target directory. Uses default cache directory if nil.
     ///   - force: Force re-download even if models exist.
+    ///   - progressHandler: Optional callback for download progress updates.
     /// - Returns: Path to the directory containing the downloaded models.
     @discardableResult
     public static func download(
         variant: Qwen3AsrVariant = .f32,
         to directory: URL? = nil,
-        force: Bool = false
+        force: Bool = false,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws -> URL {
         let targetDir = directory ?? defaultCacheDirectory(variant: variant)
         let modelsRoot: URL
@@ -186,7 +189,7 @@ public struct Qwen3AsrModels: Sendable {
         }
 
         logger.info("Downloading Qwen3-ASR \(variant.rawValue) models from HuggingFace...")
-        try await DownloadUtils.downloadRepo(variant.repo, to: modelsRoot)
+        try await DownloadUtils.downloadRepo(variant.repo, to: modelsRoot, progressHandler: progressHandler)
         logger.info("Successfully downloaded Qwen3-ASR \(variant.rawValue) models")
         return targetDir
     }
@@ -355,8 +358,7 @@ public final class EmbeddingWeights: Sendable {
 
     /// Load embedding weights from a binary file with explicit expected dimensions.
     ///
-    /// Use this initializer when loading embeddings for models other than Qwen3-ASR
-    /// (e.g., VibeVoice-ASR which has a different vocab size and hidden size).
+    /// Use this initializer when loading embeddings for models with explicit dimensions.
     ///
     /// - Parameters:
     ///   - url: Path to the binary embeddings file.
@@ -369,26 +371,26 @@ public final class EmbeddingWeights: Sendable {
     ) throws -> EmbeddingWeights {
         let fileData = try Data(contentsOf: url)
         guard fileData.count >= 8 else {
-            throw VibeVoiceAsrError.modelLoadFailed("Embedding file too small")
+            throw Qwen3AsrError.modelLoadFailed("Embedding file too small")
         }
 
         let vocabVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) })
         let hiddenVal = Int(fileData.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) })
 
         if let expected = expectedVocabSize, vocabVal != expected {
-            throw VibeVoiceAsrError.modelLoadFailed(
+            throw Qwen3AsrError.modelLoadFailed(
                 "Embedding vocab size \(vocabVal) != expected \(expected)"
             )
         }
         if let expected = expectedHiddenSize, hiddenVal != expected {
-            throw VibeVoiceAsrError.modelLoadFailed(
+            throw Qwen3AsrError.modelLoadFailed(
                 "Embedding hidden size \(hiddenVal) != expected \(expected)"
             )
         }
 
         let expectedSize = 8 + vocabVal * hiddenVal * 2
         guard fileData.count == expectedSize else {
-            throw VibeVoiceAsrError.modelLoadFailed(
+            throw Qwen3AsrError.modelLoadFailed(
                 "Embedding file size mismatch: expected \(expectedSize), got \(fileData.count)"
             )
         }
@@ -415,7 +417,7 @@ public final class EmbeddingWeights: Sendable {
         var result = [Float](repeating: 0, count: hiddenSize)
 
         #if arch(arm64)
-        data.withUnsafeBytes { ptr in
+        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
             let f16Ptr = ptr.baseAddress!.advanced(by: offset)
                 .assumingMemoryBound(to: Float16.self)
 
@@ -442,6 +444,7 @@ public final class EmbeddingWeights: Sendable {
 
 public enum Qwen3AsrError: Error, LocalizedError {
     case modelNotFound(String)
+    case modelLoadFailed(String)
     case invalidVocabulary
     case encoderFailed(String)
     case decoderFailed(String)
@@ -451,6 +454,8 @@ public enum Qwen3AsrError: Error, LocalizedError {
         switch self {
         case .modelNotFound(let name):
             return "Qwen3-ASR model not found: \(name)"
+        case .modelLoadFailed(let detail):
+            return "Qwen3-ASR model load failed: \(detail)"
         case .invalidVocabulary:
             return "Invalid vocabulary file"
         case .encoderFailed(let detail):

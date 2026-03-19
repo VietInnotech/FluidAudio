@@ -2,6 +2,7 @@ import Foundation
 import OnnxRuntimeBindings
 
 public struct ZipformerVnAsrModels {
+    public let modelDirectory: URL
     public let encoderSession: ORTSession
     public let decoderSession: ORTSession
     public let joinerSession: ORTSession
@@ -29,11 +30,15 @@ public struct ZipformerVnAsrModels {
         let env = try ORTEnv(loggingLevel: ORTLoggingLevel.warning)
         let sessionOptions = try ORTSessionOptions()
         try sessionOptions.setIntraOpNumThreads(1)
+        try sessionOptions.setGraphOptimizationLevel(.all)
 
         if ORTIsCoreMLExecutionProviderAvailable() {
-            let coreMLOptions = ORTCoreMLExecutionProviderOptions()
-            coreMLOptions.enableOnSubgraphs = true
-            _ = try? sessionOptions.appendCoreMLExecutionProvider(with: coreMLOptions)
+            _ = try? sessionOptions.appendCoreMLExecutionProvider(
+                withOptionsV2: [
+                    "EnableOnSubgraphs": "1",
+                    "RequireStaticInputShapes": "1",
+                ]
+            )
         }
 
         let encoderSession = try ORTSession(env: env, modelPath: encoderPath.path, sessionOptions: sessionOptions)
@@ -43,6 +48,7 @@ public struct ZipformerVnAsrModels {
         let tokenMap = try loadTokens(from: tokensPath)
 
         return ZipformerVnAsrModels(
+            modelDirectory: directory,
             encoderSession: encoderSession,
             decoderSession: decoderSession,
             joinerSession: joinerSession,
@@ -60,21 +66,47 @@ public struct ZipformerVnAsrModels {
 
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
+        let releaseURL = URL(
+            string:
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+                    + "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09.tar.bz2"
+        )!
+
+        logger.info("Downloading Zipformer VN release bundle from GitHub...")
+        let (archiveURL, response) = try await DownloadUtils.sharedSession.download(from: releaseURL)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw AsrModelsError.downloadFailed("HTTP failure while downloading Zipformer VN release bundle")
+        }
+
+        let fileManager = FileManager.default
+        let extractionRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("zipformer-vn-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: extractionRoot, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: extractionRoot)
+            try? fileManager.removeItem(at: archiveURL)
+        }
+
+        try extractTarBz2(archiveURL, to: extractionRoot)
+
         for fileName in ModelNames.ZipformerVN.requiredModels {
             let destination = targetDir.appendingPathComponent(fileName)
-            if !force && FileManager.default.fileExists(atPath: destination.path) {
+            if force && fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+            if !force && fileManager.fileExists(atPath: destination.path) {
                 continue
             }
 
-            let encoded = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName
-            let url = try ModelRegistry.resolveModel(Repo.zipformerVn.remotePath, encoded)
-            let (data, response) = try await DownloadUtils.fetchWithAuth(from: url)
-
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                throw AsrModelsError.downloadFailed("HTTP failure while downloading \(fileName)")
+            guard let source = findFile(named: fileName, under: extractionRoot) else {
+                throw AsrModelsError.downloadFailed("Release bundle missing \(fileName)")
             }
 
-            try data.write(to: destination, options: .atomic)
+            try fileManager.copyItem(at: source, to: destination)
+        }
+
+        guard modelsExist(at: targetDir) else {
+            throw AsrModelsError.downloadFailed("Zipformer VN files were not extracted correctly")
         }
 
         return targetDir
@@ -94,6 +126,39 @@ public struct ZipformerVnAsrModels {
 
     public static func defaultCacheDirectory() -> URL {
         ModelCachePaths.modelsRootDirectory().appendingPathComponent(Repo.zipformerVn.folderName, isDirectory: true)
+    }
+
+    private static func extractTarBz2(_ archiveURL: URL, to directory: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        process.arguments = ["-xjf", archiveURL.path, "-C", directory.path]
+
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw AsrModelsError.downloadFailed("Failed to extract Zipformer VN archive: \(errorMessage)")
+        }
+    }
+
+    private static func findFile(named fileName: String, under root: URL) -> URL? {
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        while let next = enumerator?.nextObject() as? URL {
+            guard next.lastPathComponent == fileName else { continue }
+            return next
+        }
+
+        return nil
     }
 
     private static func loadTokens(from path: URL) throws -> [Int: String] {

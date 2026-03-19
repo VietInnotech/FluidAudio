@@ -197,7 +197,7 @@ Read as a fraction.
 SSML tags are processed automatically when you call `synthesize()`:
 
 ```swift
-import FluidAudioEspeak
+import FluidAudio
 
 let ttsManager = KokoroTtsManager()
 try await ttsManager.initialize()

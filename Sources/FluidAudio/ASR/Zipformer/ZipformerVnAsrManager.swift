@@ -2,12 +2,45 @@ import Accelerate
 import Foundation
 import OnnxRuntimeBindings
 
+public enum ZipformerVnBackend: String, Sendable {
+    case native
+    case sherpaOffline = "sherpa-offline"
+    case sherpaStreaming = "sherpa-streaming"
+
+    public static var preferred: ZipformerVnBackend {
+        #if os(macOS)
+        .sherpaOffline
+        #else
+        .native
+        #endif
+    }
+}
+
 public actor ZipformerVnAsrManager {
     private let logger = AppLogger(category: "ZipformerVnAsrManager")
     private let audioConverter = AudioConverter()
     private let melExtractor = ZipformerVnMelSpectrogram()
+    private static let defaultVadConfig = VadConfig(defaultThreshold: 0.5)
+    private static let vadSegmentationConfig = VadSegmentationConfig(
+        minSpeechDuration: 0.05,
+        minSilenceDuration: 0.25,
+        maxSpeechDuration: 14.0,
+        speechPadding: 0.05,
+        silenceThresholdForSplit: 0.3,
+        negativeThreshold: nil,
+        negativeThresholdOffset: 0.15,
+        minSilenceAtMaxSpeech: 0.098,
+        useMaxPossibleSilenceAtMaxSpeech: true
+    )
 
     private var models: ZipformerVnAsrModels?
+    private var vadManager: VadManager?
+    #if os(macOS)
+    private var sherpaOfflineRecognizer: SherpaOnnxOfflineZipformerRecognizer?
+    private var sherpaOfflineModelDirectory: URL?
+    private var sherpaStreamingRecognizer: SherpaOnnxStreamingZipformerRecognizer?
+    private var sherpaStreamingModelDirectory: URL?
+    #endif
 
     public init() {}
 
@@ -17,23 +50,40 @@ public actor ZipformerVnAsrManager {
 
     public func loadModels(from directory: URL) throws {
         models = try ZipformerVnAsrModels.load(from: directory)
+        resetSherpaCaches()
     }
 
     public func loadModels(directory: URL? = nil, forceDownload: Bool = false) async throws {
         models = try await ZipformerVnAsrModels.downloadAndLoad(to: directory, force: forceDownload)
+        resetSherpaCaches()
     }
 
-    public func transcribe(url: URL) async throws -> ASRResult {
+    public func transcribe(
+        url: URL,
+        useVad: Bool = true,
+        backend: ZipformerVnBackend = .preferred,
+        streamingModelDirectory: URL? = nil
+    ) async throws -> ASRResult {
         let samples: [Float]
         do {
             samples = try audioConverter.resampleAudioFile(url)
         } catch {
             throw ASRError.fileAccessFailed(url, error)
         }
-        return try await transcribe(audioSamples: samples)
+        return try await transcribe(
+            audioSamples: samples,
+            useVad: useVad,
+            backend: backend,
+            streamingModelDirectory: streamingModelDirectory
+        )
     }
 
-    public func transcribe(audioSamples: [Float]) async throws -> ASRResult {
+    public func transcribe(
+        audioSamples: [Float],
+        useVad: Bool = true,
+        backend: ZipformerVnBackend = .preferred,
+        streamingModelDirectory: URL? = nil
+    ) async throws -> ASRResult {
         guard let models else {
             throw ASRError.notInitialized
         }
@@ -42,8 +92,270 @@ public actor ZipformerVnAsrManager {
             throw ASRError.invalidAudioData
         }
 
+        let audioDuration = Double(audioSamples.count) / Double(ASRConstants.sampleRate)
         let start = CFAbsoluteTimeGetCurrent()
 
+        if useVad {
+            let vadManager = try await ensureVadManager()
+            let speechSegments = try await vadManager.segmentSpeech(audioSamples, config: Self.vadSegmentationConfig)
+
+            if !speechSegments.isEmpty {
+                var segmentTexts: [String] = []
+                segmentTexts.reserveCapacity(speechSegments.count)
+
+                var weightedConfidenceSum = 0.0
+                var weightedDurationSum = 0.0
+                var transcribedSegmentCount = 0
+
+                for segment in speechSegments {
+                    let startSample = max(0, segment.startSample(sampleRate: ASRConstants.sampleRate))
+                    let endSample = min(audioSamples.count, segment.endSample(sampleRate: ASRConstants.sampleRate))
+
+                    guard endSample > startSample else {
+                        continue
+                    }
+
+                    let segmentSamples = Array(audioSamples[startSample..<endSample])
+                    let segmentResult = try transcribeSegment(
+                        audioSamples: segmentSamples,
+                        backend: backend,
+                        models: models,
+                        streamingModelDirectory: streamingModelDirectory
+                    )
+                    let trimmedText = ZipformerVnTranscriptPostprocessor.cleanSegmentText(segmentResult.text)
+
+                    guard !trimmedText.isEmpty else {
+                        continue
+                    }
+
+                    segmentTexts.append(trimmedText)
+                    let weight = max(segment.duration, segmentResult.duration)
+                    weightedConfidenceSum += Double(segmentResult.confidence) * weight
+                    weightedDurationSum += weight
+                    transcribedSegmentCount += 1
+                }
+
+                if !segmentTexts.isEmpty {
+                    let processingTime = CFAbsoluteTimeGetCurrent() - start
+                    let confidence = weightedDurationSum > 0 ? Float(weightedConfidenceSum / weightedDurationSum) : 0
+                    logger.info(
+                        "Zipformer transcribed \(String(format: "%.1f", audioDuration))s in \(String(format: "%.2f", processingTime))s using VAD segments=\(transcribedSegmentCount)"
+                    )
+                    return ASRResult(
+                        text: ZipformerVnTranscriptPostprocessor.combineSegmentTexts(segmentTexts),
+                        confidence: confidence,
+                        duration: audioDuration,
+                        processingTime: processingTime,
+                        tokenTimings: nil
+                    )
+                }
+
+                logger.info("Zipformer VAD produced no non-empty transcripts; falling back to full decode")
+            } else {
+                logger.info("Zipformer VAD found no speech segments; falling back to full decode")
+            }
+        }
+
+        return try transcribeSegment(
+            audioSamples: audioSamples,
+            backend: backend,
+            models: models,
+            streamingModelDirectory: streamingModelDirectory
+        )
+    }
+
+    private func resetSherpaCaches() {
+        #if os(macOS)
+        sherpaOfflineRecognizer = nil
+        sherpaOfflineModelDirectory = nil
+        sherpaStreamingRecognizer = nil
+        sherpaStreamingModelDirectory = nil
+        #endif
+    }
+
+    private func ensureVadManager() async throws -> VadManager {
+        if let vadManager {
+            return vadManager
+        }
+
+        let manager = try await VadManager(config: Self.defaultVadConfig)
+        if let existing = vadManager {
+            return existing
+        }
+        vadManager = manager
+        return manager
+    }
+
+    private func transcribeSegment(
+        audioSamples: [Float],
+        backend: ZipformerVnBackend,
+        models: ZipformerVnAsrModels,
+        streamingModelDirectory: URL?
+    ) throws -> ASRResult {
+        switch backend {
+        case .native:
+            return try transcribeDirect(audioSamples: audioSamples, models: models)
+        case .sherpaOffline:
+            #if os(macOS)
+            return try transcribeSherpaOffline(audioSamples: audioSamples, models: models)
+            #else
+            throw ASRError.unsupportedPlatform("sherpa-onnx backend is currently available on macOS only")
+            #endif
+        case .sherpaStreaming:
+            #if os(macOS)
+            return try transcribeSherpaStreaming(
+                audioSamples: audioSamples,
+                models: models,
+                streamingModelDirectory: streamingModelDirectory
+            )
+            #else
+            throw ASRError.unsupportedPlatform("sherpa-onnx streaming backend is currently available on macOS only")
+            #endif
+        }
+    }
+
+    #if os(macOS)
+    private func transcribeSherpaOffline(audioSamples: [Float], models: ZipformerVnAsrModels) throws -> ASRResult {
+        let recognizer = try ensureSherpaOfflineRecognizer(models: models)
+        let start = CFAbsoluteTimeGetCurrent()
+        let rawText = try recognizer.decode(samples: audioSamples, sampleRate: ASRConstants.sampleRate)
+        let processingTime = CFAbsoluteTimeGetCurrent() - start
+        let duration = Double(audioSamples.count) / Double(ASRConstants.sampleRate)
+        let text = ZipformerVnTranscriptPostprocessor.cleanSegmentText(rawText)
+
+        let durationStr = String(format: "%.1f", duration)
+        let procStr = String(format: "%.2f", processingTime)
+        logger.info("Zipformer sherpa offline decoded \(durationStr)s in \(procStr)s")
+
+        return ASRResult(
+            text: text,
+            confidence: text.isEmpty ? 0 : 1,
+            duration: duration,
+            processingTime: processingTime,
+            tokenTimings: nil
+        )
+    }
+
+    private func transcribeSherpaStreaming(
+        audioSamples: [Float],
+        models: ZipformerVnAsrModels,
+        streamingModelDirectory: URL?
+    ) throws -> ASRResult {
+        let resolvedDirectory = try resolveStreamingModelDirectory(
+            explicitDirectory: streamingModelDirectory,
+            fallbackOfflineDirectory: models.modelDirectory
+        )
+        let recognizer = try ensureSherpaStreamingRecognizer(modelDirectory: resolvedDirectory)
+        let start = CFAbsoluteTimeGetCurrent()
+        let rawText = try recognizer.decode(samples: audioSamples, sampleRate: ASRConstants.sampleRate)
+        let processingTime = CFAbsoluteTimeGetCurrent() - start
+        let duration = Double(audioSamples.count) / Double(ASRConstants.sampleRate)
+        let text = ZipformerVnTranscriptPostprocessor.cleanSegmentText(rawText)
+
+        let durationStr = String(format: "%.1f", duration)
+        let procStr = String(format: "%.2f", processingTime)
+        logger.info("Zipformer sherpa streaming decoded \(durationStr)s in \(procStr)s")
+
+        return ASRResult(
+            text: text,
+            confidence: text.isEmpty ? 0 : 1,
+            duration: duration,
+            processingTime: processingTime,
+            tokenTimings: nil
+        )
+    }
+
+    private func ensureSherpaOfflineRecognizer(models: ZipformerVnAsrModels) throws -> SherpaOnnxOfflineZipformerRecognizer {
+        if let sherpaOfflineRecognizer, sherpaOfflineModelDirectory == models.modelDirectory {
+            return sherpaOfflineRecognizer
+        }
+
+        let paths = SherpaOnnxOfflineTransducerPaths(
+            encoder: models.modelDirectory.appendingPathComponent(ModelNames.ZipformerVN.encoderFile).path,
+            decoder: models.modelDirectory.appendingPathComponent(ModelNames.ZipformerVN.decoderFile).path,
+            joiner: models.modelDirectory.appendingPathComponent(ModelNames.ZipformerVN.joinerFile).path,
+            tokens: models.modelDirectory.appendingPathComponent(ModelNames.ZipformerVN.tokensFile).path
+        )
+        let recognizer = try SherpaOnnxOfflineZipformerRecognizer(paths: paths, provider: .coreml)
+        sherpaOfflineRecognizer = recognizer
+        sherpaOfflineModelDirectory = models.modelDirectory
+        return recognizer
+    }
+
+    private func ensureSherpaStreamingRecognizer(modelDirectory: URL) throws -> SherpaOnnxStreamingZipformerRecognizer {
+        if let sherpaStreamingRecognizer, sherpaStreamingModelDirectory == modelDirectory {
+            return sherpaStreamingRecognizer
+        }
+
+        let paths = SherpaOnnxOnlineTransducerPaths(
+            encoder: modelDirectory.appendingPathComponent(
+                "encoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+            ).path,
+            decoder: modelDirectory.appendingPathComponent(
+                "decoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+            ).path,
+            joiner: modelDirectory.appendingPathComponent(
+                "joiner-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+            ).path,
+            tokens: modelDirectory.appendingPathComponent(ModelNames.ZipformerVN.tokensFile).path
+        )
+        let recognizer = try SherpaOnnxStreamingZipformerRecognizer(paths: paths, provider: .coreml)
+        sherpaStreamingRecognizer = recognizer
+        sherpaStreamingModelDirectory = modelDirectory
+        return recognizer
+    }
+
+    private func resolveStreamingModelDirectory(explicitDirectory: URL?, fallbackOfflineDirectory: URL) throws -> URL {
+        if let explicitDirectory {
+            guard Self.streamingModelFilesExist(at: explicitDirectory) else {
+                throw ASRError.processingFailed("Streaming Zipformer model files missing at \(explicitDirectory.path)")
+            }
+            return explicitDirectory
+        }
+
+        if Self.streamingModelFilesExist(at: fallbackOfflineDirectory) {
+            return fallbackOfflineDirectory
+        }
+
+        if let envPath = ProcessInfo.processInfo.environment["FLUIDAUDIO_ZIPFORMER_STREAMING_MODEL_DIR"] {
+            let envDirectory = URL(fileURLWithPath: envPath)
+            if Self.streamingModelFilesExist(at: envDirectory) {
+                return envDirectory
+            }
+        }
+
+        let siblingDefault = URL(
+            fileURLWithPath: "/Users/vit/zipformer-macos/models/stt/hynt-Zipformer-30M-RNNT-Streaming-6000h"
+        )
+        if Self.streamingModelFilesExist(at: siblingDefault) {
+            return siblingDefault
+        }
+
+        throw ASRError.processingFailed(
+            "Streaming backend requires a model dir containing encoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+        )
+    }
+
+    private static func streamingModelFilesExist(at directory: URL) -> Bool {
+        let fileManager = FileManager.default
+        let requiredFiles = [
+            "encoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx",
+            "decoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx",
+            "joiner-epoch-31-avg-11-chunk-32-left-128.fp16.onnx",
+            ModelNames.ZipformerVN.tokensFile,
+        ]
+        return requiredFiles.allSatisfy { fileName in
+            fileManager.fileExists(atPath: directory.appendingPathComponent(fileName).path)
+        }
+    }
+    #endif
+
+    private func transcribeDirect(audioSamples: [Float], models: ZipformerVnAsrModels) throws -> ASRResult {
+        guard !audioSamples.isEmpty else {
+            throw ASRError.invalidAudioData
+        }
+
+        let start = CFAbsoluteTimeGetCurrent()
         let (features, frameCount) = melExtractor.compute(audio: audioSamples)
         let encoderOut = try runEncoder(session: models.encoderSession, features: features, frameCount: frameCount)
         let tokenIds = try runGreedyDecode(
@@ -53,13 +365,15 @@ public actor ZipformerVnAsrManager {
             joinerSession: models.joinerSession
         )
 
-        let text = detokenize(tokenIds: tokenIds, tokens: models.tokens)
+        let text = ZipformerVnTranscriptPostprocessor.cleanSegmentText(
+            detokenize(tokenIds: tokenIds, tokens: models.tokens)
+        )
         let processingTime = CFAbsoluteTimeGetCurrent() - start
         let duration = Double(audioSamples.count) / Double(ASRConstants.sampleRate)
 
         let durationStr = String(format: "%.1f", duration)
         let procStr = String(format: "%.2f", processingTime)
-        logger.info("Zipformer transcribed \(durationStr)s in \(procStr)s")
+        logger.info("Zipformer direct decode transcribed \(durationStr)s in \(procStr)s")
 
         return ASRResult(
             text: text,
@@ -126,6 +440,7 @@ public actor ZipformerVnAsrManager {
         let blankId = 0
         var context: [Int64] = [0, 0]
         var tokenIds: [Int] = []
+        var decoderOut = try runDecoder(session: decoderSession, context: context)
 
         for t in 0..<validFrameCount {
             let frameBase = t * encoderDim
@@ -136,7 +451,6 @@ public actor ZipformerVnAsrManager {
             while emitted && emittedCount < 4 {
                 emitted = false
 
-                let decoderOut = try runDecoder(session: decoderSession, context: context)
                 let logits = try runJoiner(session: joinerSession, encoderFrame: frame, decoderOut: decoderOut)
                 let best = argmax(logits)
 
@@ -144,6 +458,7 @@ public actor ZipformerVnAsrManager {
                     tokenIds.append(best)
                     context[0] = context[1]
                     context[1] = Int64(best)
+                    decoderOut = try runDecoder(session: decoderSession, context: context)
                     emitted = true
                     emittedCount += 1
                 }

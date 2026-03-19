@@ -1,5 +1,12 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+let environment = ProcessInfo.processInfo.environment
+let sherpaOnnxRoot = environment["SHERPA_ONNX_ROOT"] ?? "/Users/vit/zipformer-macos/sherpa-onnx"
+let sherpaOnnxIncludeRoot = environment["SHERPA_ONNX_INCLUDE_ROOT"] ?? "\(sherpaOnnxRoot)/sherpa-onnx/c-api"
+let sherpaOnnxLibDir = environment["SHERPA_ONNX_LIB_DIR"] ?? "\(sherpaOnnxRoot)/build/lib"
+let sherpaOnnxOrtLibDir = environment["SHERPA_ONNX_ORT_LIB_DIR"] ?? "\(sherpaOnnxRoot)/build/_deps/onnxruntime-src/lib"
 
 let package = Package(
     name: "FluidAudio",
@@ -12,10 +19,6 @@ let package = Package(
             name: "FluidAudio",
             targets: ["FluidAudio"]
         ),
-        .library(
-            name: "FluidAudioEspeak",
-            targets: ["FluidAudioEspeak"]
-        ),
         .executable(
             name: "fluidaudiocli",
             targets: ["FluidAudioCLI"]
@@ -26,7 +29,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.2.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.20.1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/vapor/multipart-kit.git", from: "4.0.0"),
@@ -38,12 +41,32 @@ let package = Package(
             dependencies: [
                 "FastClusterWrapper",
                 "MachTaskSelfWrapper",
+                .target(name: "CSherpaOnnx", condition: .when(platforms: [.macOS])),
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager"),
             ],
             path: "Sources/FluidAudio",
             exclude: [
                 "Frameworks"
+            ]
+        ),
+        .target(
+            name: "CSherpaOnnx",
+            path: "Sources/CSherpaOnnx",
+            publicHeadersPath: "include",
+            cSettings: [
+                .unsafeFlags(["-I\(sherpaOnnxIncludeRoot)"])
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L\(sherpaOnnxLibDir)",
+                    "-L\(sherpaOnnxOrtLibDir)",
+                    "-Xlinker", "-rpath", "-Xlinker", sherpaOnnxLibDir,
+                    "-Xlinker", "-rpath", "-Xlinker", sherpaOnnxOrtLibDir,
+                ]),
+                .linkedLibrary("sherpa-onnx-c-api"),
+                .linkedLibrary("onnxruntime"),
+                .linkedLibrary("c++"),
             ]
         ),
         .target(
@@ -56,24 +79,10 @@ let package = Package(
             path: "Sources/MachTaskSelfWrapper",
             publicHeadersPath: "include"
         ),
-        // TTS targets are always available for FluidAudioEspeak product
-        .binaryTarget(
-            name: "ESpeakNG",
-            path: "Frameworks/ESpeakNG.xcframework"
-        ),
-        .target(
-            name: "FluidAudioEspeak",
-            dependencies: [
-                "FluidAudio",
-                "ESpeakNG",
-            ],
-            path: "Sources/FluidAudioEspeak"
-        ),
         .executableTarget(
             name: "FluidAudioCLI",
             dependencies: [
                 "FluidAudio",
-                "FluidAudioEspeak",
             ],
             path: "Sources/FluidAudioCLI",
             exclude: ["README.md"],
@@ -96,7 +105,6 @@ let package = Package(
             name: "FluidAudioTests",
             dependencies: [
                 "FluidAudio",
-                "FluidAudioEspeak",
             ]
         ),
     ],
