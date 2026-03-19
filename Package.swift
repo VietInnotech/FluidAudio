@@ -30,6 +30,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.20.1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/vapor/multipart-kit.git", from: "4.0.0"),
+        .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.24.0"),
     ],
     targets: [
         .target(
@@ -38,6 +39,7 @@ let package = Package(
                 "FastClusterWrapper",
                 "MachTaskSelfWrapper",
                 .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager"),
             ],
             path: "Sources/FluidAudio",
             exclude: [

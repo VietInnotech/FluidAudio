@@ -71,6 +71,8 @@ struct FluidAudioCLI {
             await CtcTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "vibevoice-transcribe":
             await VibeVoiceTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "zipformer-transcribe":
+            await ZipformerTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "help", "--help", "-h":
             printUsage()
         default:
@@ -105,6 +107,7 @@ struct FluidAudioCLI {
                 whisper-transcribe       Transcribe audio using Whisper Large v3 Turbo
                 whisper-benchmark       Run Whisper Large v3 Turbo benchmark on LibriSpeech
                 vibevoice-transcribe    Transcribe audio with VibeVoice-ASR (ASR+diarization)
+                zipformer-transcribe    Transcribe audio using Zipformer VN (Vietnamese, native ONNX)
                 download                Download evaluation datasets
                 help                    Show this help message
 

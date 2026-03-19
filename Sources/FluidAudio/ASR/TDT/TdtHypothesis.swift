@@ -32,9 +32,4 @@ struct TdtHypothesis {
 
     /// Get the maximum timestamp value, or 0 if no timestamps
     var maxTimestamp: Int { timestamps.max() ?? 0 }
-
-    /// Return tuple for backward compatibility with existing APIs
-    var destructured: (tokens: [Int], timestamps: [Int], confidences: [Float]) {
-        (ySequence, timestamps, tokenConfidences)
-    }
 }

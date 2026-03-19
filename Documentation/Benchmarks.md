@@ -458,7 +458,7 @@ swift run -c release fluidaudiocli parakeet-eou --benchmark --chunk-size 160 --u
 
 ## Speaker Diarization
 
-The offline version uses the community-1 model, the online version uses the legacy speaker-diarization-3.1 model.
+The offline version uses the community-1 model, the online version uses the speaker-diarization-3.1 model.
 
 ### Offline diarization pipeline
 

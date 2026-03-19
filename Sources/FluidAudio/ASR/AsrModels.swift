@@ -16,10 +16,6 @@ public enum AsrModelVersion: Sendable {
 }
 
 public struct AsrModels: Sendable {
-
-    /// Required model names for ASR
-    public static let requiredModelNames = ModelNames.ASR.requiredModels
-
     public let encoder: MLModel
     public let preprocessor: MLModel
     public let decoder: MLModel

@@ -103,7 +103,7 @@ FluidAudio provides two library products:
   - Includes PocketTTS for GPL-free text-to-speech
   - Recommended for most apps, including closed-source
 
-- **`FluidAudioTTS`** - Full TTS Suite (Kokoro + ESpeakNG)
+- **`FluidAudioEspeak`** - Full TTS suite (Kokoro + ESpeakNG)
   - Separate optional product
   - Includes ESpeakNG framework (GPL-3.0)
   - Use if you need Kokoro's SSML/phoneme control features
@@ -112,7 +112,7 @@ FluidAudio provides two library products:
 1. Add the FluidAudio package to your project
 2. In the "Add Package" dialog, select your desired product(s):
    - `FluidAudio` for core features (ASR, diarization, VAD, PocketTTS)
-   - `FluidAudioTTS` if you need Kokoro TTS with SSML support
+   - `FluidAudioEspeak` if you need Kokoro TTS with SSML support
 3. Add the selected product(s) to your app target
 
 **In Package.swift:**
@@ -121,10 +121,8 @@ FluidAudio provides two library products:
 .product(name: "FluidAudio", package: "FluidAudio")
 
 // Add Kokoro TTS support (includes GPL ESpeakNG):
-.product(name: "FluidAudioTTS", package: "FluidAudio")
+.product(name: "FluidAudioEspeak", package: "FluidAudio")
 ```
-
-**CocoaPods:** We recommend using [cocoapods-spm](https://github.com/trinhngocthuyen/cocoapods-spm) for better SPM integration, but if needed, you can also use our podspec: `pod 'FluidAudio', '~> 0.7.8'`
 
 > **Note:** The Kokoro TTS tooling currently ships arm64-only dependencies. See the [arm64 build requirements](Documentation/TTS/README.md#arm64-only-builds) guide if you hit linker errors targeting x86_64.
 

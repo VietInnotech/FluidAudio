@@ -8,10 +8,6 @@ public enum CoreMLDiarizer {
 }
 
 public struct DiarizerModels: Sendable {
-
-    /// Required model names for Diarizer
-    public static let requiredModelNames = ModelNames.Diarizer.requiredModels
-
     public let segmentationModel: CoreMLDiarizer.SegmentationModel
     public let embeddingModel: CoreMLDiarizer.EmbeddingModel
     public let compilationDuration: TimeInterval
@@ -54,7 +50,7 @@ extension DiarizerModels {
 
         let models = try await DownloadUtils.loadModels(
             .diarizer,
-            modelNames: Array(requiredModelNames),
+            modelNames: Array(ModelNames.Diarizer.requiredModels),
             directory: directory.deletingLastPathComponent(),
             computeUnits: config.computeUnits
         )

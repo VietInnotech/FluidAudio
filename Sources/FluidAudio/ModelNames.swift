@@ -14,6 +14,7 @@ public enum Repo: String, CaseIterable {
     case sortformer = "FluidInference/diar-streaming-sortformer-coreml"
     case pocketTts = "FluidInference/pocket-tts-coreml"
     case parakeetCtcVietnamese = "FluidInference/parakeet-ctc-0.6b-vietnamese-coreml"
+    case zipformerVn = "k2-fsa/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
     case qwen3Asr = "FluidInference/qwen3-asr-0.6b-coreml/f32"
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case qwen3Asr17b = "FluidInference/qwen3-asr-1.7b-coreml/f32"
@@ -37,6 +38,8 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-0.6b-coreml"
         case .parakeetCtcVietnamese:
             return "parakeet-ctc-0.6b-vietnamese-coreml"
+        case .zipformerVn:
+            return "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
         case .parakeetEou160:
             return "parakeet-realtime-eou-120m-coreml/160ms"
         case .parakeetEou320:
@@ -75,6 +78,8 @@ public enum Repo: String, CaseIterable {
             return "FluidInference/parakeet-ctc-0.6b-coreml"
         case .parakeetCtcVietnamese:
             return "FluidInference/parakeet-ctc-0.6b-vietnamese-coreml"
+        case .zipformerVn:
+            return "k2-fsa/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
         case .parakeetEou160, .parakeetEou320:
             return "FluidInference/parakeet-realtime-eou-120m-coreml"
         case .sortformer:
@@ -303,15 +308,25 @@ public enum ModelNames {
             return Variant.allCases.first { $0.isCompatible(with: config) }?.fileName
         }
 
-        /// Default bundle name
-        public static var defaultBundle: String {
-            return defaultVariant.fileName
-        }
-
         /// All Sortformer bundle models required by the downloader
         public static var requiredModels: Set<String> {
             Set(Variant.allCases.map(\.fileName))
         }
+    }
+
+    /// Zipformer VN model names
+    public enum ZipformerVN {
+        public static let encoderFile = "encoder.int8.onnx"
+        public static let decoderFile = "decoder.onnx"
+        public static let joinerFile = "joiner.int8.onnx"
+        public static let tokensFile = "tokens.txt"
+
+        public static let requiredModels: Set<String> = [
+            encoderFile,
+            decoderFile,
+            joinerFile,
+            tokensFile,
+        ]
     }
 
     /// Qwen3-ASR model names
@@ -444,11 +459,6 @@ public enum ModelNames {
             variant.fileName
         }
 
-        /// Default bundle filename (legacy accessor).
-        public static var defaultBundle: String {
-            defaultVariant.fileName
-        }
-
         /// All Kokoro model bundles required by the downloader.
         public static var requiredModels: Set<String> {
             Set(Variant.allCases.map(\.fileName))
@@ -463,6 +473,8 @@ public enum ModelNames {
             return ModelNames.ASR.requiredModels
         case .parakeetCtc110m, .parakeetCtc06b, .parakeetCtcVietnamese:
             return ModelNames.CTC.requiredModels
+        case .zipformerVn:
+            return ModelNames.ZipformerVN.requiredModels
         case .parakeetEou160, .parakeetEou320:
             return ModelNames.ParakeetEOU.requiredModels
         case .diarizer:

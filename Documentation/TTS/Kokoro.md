@@ -19,9 +19,9 @@ The first invocation downloads Kokoro models, phoneme dictionaries, and voice em
 ### Swift
 
 ```swift
-import FluidAudioTTS
+import FluidAudioEspeak
 
-let manager = TtSManager()
+let manager = KokoroTtsManager()
 try await manager.initialize()
 
 let audioData = try await manager.synthesize(text: "Hello from FluidAudio!")
@@ -35,7 +35,7 @@ Swap in `manager.initialize(models:)` when you want to preload only the long-for
 ## Inspecting Chunk Metadata
 
 ```swift
-let manager = TtSManager()
+let manager = KokoroTtsManager()
 try await manager.initialize()
 
 let detailed = try await manager.synthesizeDetailed(
@@ -99,12 +99,12 @@ PocketTTS cannot support phoneme-level features because it has no phoneme stage 
 
 ### App/Library Development (Xcode & SwiftPM)
 
-When adding FluidAudio to your Xcode project or Package.swift, select the **`FluidAudioTTS`** product:
+When adding FluidAudio to your Xcode project or Package.swift, select the **`FluidAudioEspeak`** product:
 
 **Xcode:**
 1. File > Add Package Dependencies
 2. Enter FluidAudio repository URL
-3. Choose **`FluidAudioTTS`**
+3. Choose **`FluidAudioEspeak`**
 4. Add it to your app target
 
 **Package.swift:**
@@ -116,7 +116,7 @@ targets: [
     .target(
         name: "YourTarget",
         dependencies: [
-            .product(name: "FluidAudioTTS", package: "FluidAudio")
+            .product(name: "FluidAudioEspeak", package: "FluidAudio")
         ]
     )
 ]
@@ -125,7 +125,7 @@ targets: [
 **Import in your code:**
 ```swift
 import FluidAudio       // Core functionality (ASR, diarization, VAD)
-import FluidAudioTTS    // TTS features
+import FluidAudioEspeak // TTS features
 ```
 
 ### CLI Development
